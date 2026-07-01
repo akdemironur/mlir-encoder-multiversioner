@@ -1,0 +1,19 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# CMake / LLVM builds
+build/
+compile_commands.json
+
+# Downloaded source; version is recorded separately.
+third_party/llvm-project/
+
+# Benchmark output
+benchmarks/raw/
+benchmarks/processed/
+benchmarks/plots/
+results/
