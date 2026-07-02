@@ -4,16 +4,50 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
 # CMake / LLVM builds
-build/
-compile_commands.json
+/build/
+/cmake-build-*/
+/compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+cmake_install.cmake
+install_manifest.txt
+build.ninja
+.ninja_deps
+.ninja_log
+CMakeUserPresets.json
+
+# Compiler/linker outputs
+*.a
+*.dylib
+*.dll
+*.exe
+*.o
+*.so
 
 # Downloaded source; version is recorded separately.
-third_party/llvm-project/
+/third_party/llvm-project/
+
+# lit output
+/test-output/
+test/**/Output/
 
 # Benchmark output
 benchmarks/raw/
 benchmarks/processed/
 benchmarks/plots/
 results/
+
+# Local editor / OS state
+.cache/
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
