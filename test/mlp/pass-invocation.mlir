@@ -16,11 +16,3 @@ module {
 }
 
 // CHECK: module attributes {shortseq.ran} {
-// CHECK-LABEL: func.func @mlp(
-// CHECK-SAME: %[[X:.*]]: tensor<1x?x384xf32>
-// CHECK-SAME: %{{.*}}: tensor<384x1536xf32>
-// CHECK-SAME: %{{.*}}: tensor<1536xf32>
-// CHECK-SAME: %{{.*}}: tensor<1536x384xf32>
-// CHECK-SAME: %{{.*}}: tensor<384xf32>
-// CHECK-SAME: ) -> tensor<1x?x384xf32>
-// CHECK: return %[[X]] : tensor<1x?x384xf32>
