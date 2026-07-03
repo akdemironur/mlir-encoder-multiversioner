@@ -4,6 +4,23 @@
 // RUN:   %s | %FileCheck %s
 
 module {
+  func.func @mlp(
+      %x: tensor<1x?x384xf32>,
+      %w1: tensor<384x1536xf32>,
+      %b1: tensor<1536xf32>,
+      %w2: tensor<1536x384xf32>,
+      %b2: tensor<384xf32>
+  ) -> tensor<1x?x384xf32> attributes {shortseq.entry} {
+    return %x : tensor<1x?x384xf32>
+  }
 }
 
 // CHECK: module attributes {shortseq.ran} {
+// CHECK-LABEL: func.func @mlp(
+// CHECK-SAME: %[[X:.*]]: tensor<1x?x384xf32>
+// CHECK-SAME: %{{.*}}: tensor<384x1536xf32>
+// CHECK-SAME: %{{.*}}: tensor<1536xf32>
+// CHECK-SAME: %{{.*}}: tensor<1536x384xf32>
+// CHECK-SAME: %{{.*}}: tensor<384xf32>
+// CHECK-SAME: ) -> tensor<1x?x384xf32>
+// CHECK: return %[[X]] : tensor<1x?x384xf32>

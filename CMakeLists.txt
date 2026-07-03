@@ -35,6 +35,7 @@ target_include_directories(ShortSeqPasses
 
 target_link_libraries(ShortSeqPasses
   PRIVATE
+    MLIRFuncDialect
     MLIRIR
     MLIRPass
     MLIRSupport
@@ -52,6 +53,7 @@ set(SHORTSEQ_BUILD_DIR "${CMAKE_BINARY_DIR}")
 set(SHORTSEQ_PLUGIN "${CMAKE_BINARY_DIR}/lib/ShortSeqPasses${CMAKE_SHARED_MODULE_SUFFIX}")
 set(SHORTSEQ_MLIR_OPT "${LLVM_TOOLS_BINARY_DIR}/mlir-opt")
 set(SHORTSEQ_FILECHECK "${LLVM_TOOLS_BINARY_DIR}/FileCheck")
+set(SHORTSEQ_NOT "${LLVM_TOOLS_BINARY_DIR}/not")
 
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/test/lit.site.cfg.py.in"

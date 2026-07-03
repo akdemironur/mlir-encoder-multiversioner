@@ -4,5 +4,6 @@ config.shortseq_build_dir = "@SHORTSEQ_BUILD_DIR@"
 config.shortseq_plugin = "@SHORTSEQ_PLUGIN@"
 config.shortseq_mlir_opt = "@SHORTSEQ_MLIR_OPT@"
 config.shortseq_filecheck = "@SHORTSEQ_FILECHECK@"
+config.shortseq_not = "@SHORTSEQ_NOT@"
 
 lit_config.load_config(config, "@CMAKE_CURRENT_SOURCE_DIR@/test/lit.cfg.py")
