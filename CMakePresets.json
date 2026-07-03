@@ -18,6 +18,19 @@
         "LLVM_DIR": "${sourceDir}/build/llvm/lib/cmake/llvm",
         "MLIR_DIR": "${sourceDir}/build/llvm/lib/cmake/mlir"
       }
+    },
+    {
+      "name": "pinned-llvm22-release",
+      "displayName": "Pinned source-built LLVM/MLIR 22 release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/shortseq-pinned-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "/usr/bin/clang-22",
+        "CMAKE_CXX_COMPILER": "/usr/bin/clang++-22",
+        "LLVM_DIR": "${sourceDir}/build/llvm/lib/cmake/llvm",
+        "MLIR_DIR": "${sourceDir}/build/llvm/lib/cmake/mlir"
+      }
     }
   ],
   "buildPresets": [
@@ -28,6 +41,17 @@
     {
       "name": "check-pinned-llvm22",
       "configurePreset": "pinned-llvm22",
+      "targets": [
+        "check-shortseq"
+      ]
+    },
+    {
+      "name": "pinned-llvm22-release",
+      "configurePreset": "pinned-llvm22-release"
+    },
+    {
+      "name": "check-pinned-llvm22-release",
+      "configurePreset": "pinned-llvm22-release",
       "targets": [
         "check-shortseq"
       ]
