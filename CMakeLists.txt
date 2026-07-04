@@ -35,10 +35,13 @@ target_include_directories(ShortSeqPasses
 
 target_link_libraries(ShortSeqPasses
   PRIVATE
+    MLIRArithDialect
     MLIRFuncDialect
     MLIRIR
     MLIRPass
+    MLIRSCFDialect
     MLIRSupport
+    MLIRTensorDialect
 )
 
 # Keep the plugin path deterministic for tests and local commands.
