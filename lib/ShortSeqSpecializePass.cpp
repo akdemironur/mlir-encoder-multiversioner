@@ -16,7 +16,9 @@
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 
+#include <algorithm>
 #include <string>
 
 namespace shortseq {
@@ -25,8 +27,31 @@ namespace {
 static constexpr int64_t kBatch = 1;
 static constexpr int64_t kHidden = 384;
 static constexpr int64_t kIntermediate = 1536;
-static constexpr int64_t kInitialSpecializationLength = 16;
+static constexpr int64_t kDefaultLength = 16;
 static constexpr unsigned kSequenceAxis = 1;
+
+static mlir::LogicalResult
+normalizeSpecializationLengths(mlir::ModuleOp module,
+                               mlir::SmallVectorImpl<int64_t> &lengths) {
+  if (lengths.empty())
+    lengths.push_back(kDefaultLength);
+
+  for (int64_t length : lengths) {
+    if (length <= 0)
+      return module.emitError()
+             << "shortseq-specialize --lengths expects positive integers, got `"
+             << length << "`";
+  }
+
+  std::sort(lengths.begin(), lengths.end());
+  auto duplicate = std::adjacent_find(lengths.begin(), lengths.end());
+  if (duplicate != lengths.end())
+    return module.emitError()
+           << "shortseq-specialize --lengths contains duplicate length "
+           << *duplicate;
+
+  return mlir::success();
+}
 
 static mlir::RankedTensorType getF32TensorType(mlir::MLIRContext *context,
                                                llvm::ArrayRef<int64_t> shape) {
@@ -384,12 +409,73 @@ static void refineStageAClone(mlir::func::FuncOp clone,
   });
 }
 
+static mlir::Value emitStaticCall(mlir::OpBuilder &builder, mlir::Location loc,
+                                  mlir::func::FuncOp staticFunc,
+                                  mlir::ValueRange wrapperArgs,
+                                  mlir::Type dynamicResultType) {
+  auto staticFuncType = staticFunc.getFunctionType();
+  mlir::Type staticInputType = staticFuncType.getInput(0);
+  mlir::Type staticResultType = staticFuncType.getResult(0);
+
+  mlir::Value staticInput = mlir::tensor::CastOp::create(
+      builder, loc, staticInputType, wrapperArgs.front());
+  mlir::SmallVector<mlir::Value> staticOperands(wrapperArgs.begin(),
+                                                wrapperArgs.end());
+  staticOperands[0] = staticInput;
+
+  auto staticCall = mlir::func::CallOp::create(
+      builder, loc, staticFunc.getSymName(), mlir::TypeRange{staticResultType},
+      staticOperands);
+  return mlir::tensor::CastOp::create(builder, loc, dynamicResultType,
+                                      staticCall.getResult(0));
+}
+
+static mlir::Value
+emitDispatchChain(mlir::OpBuilder &builder, mlir::Location loc,
+                  mlir::func::FuncOp genericFunc,
+                  llvm::ArrayRef<mlir::func::FuncOp> staticFuncs,
+                  llvm::ArrayRef<int64_t> lengths, unsigned index,
+                  mlir::Value sequenceLengthValue,
+                  mlir::ValueRange wrapperArgs) {
+  auto wrapperType = genericFunc.getFunctionType();
+  mlir::Value staticLengthValue =
+      mlir::arith::ConstantIndexOp::create(builder, loc, lengths[index]);
+  mlir::Value isStaticLength =
+      mlir::arith::CmpIOp::create(builder, loc, mlir::arith::CmpIPredicate::eq,
+                                  sequenceLengthValue, staticLengthValue);
+
+  auto dispatch = mlir::scf::IfOp::create(
+      builder, loc, wrapperType.getResults(), isStaticLength,
+      /*withElseRegion=*/true);
+
+  builder.setInsertionPointToStart(&dispatch.getThenRegion().front());
+  mlir::Value staticResult = emitStaticCall(
+      builder, loc, staticFuncs[index], wrapperArgs, wrapperType.getResult(0));
+  mlir::scf::YieldOp::create(builder, loc, mlir::ValueRange{staticResult});
+
+  builder.setInsertionPointToStart(&dispatch.getElseRegion().front());
+  if (index + 1 < staticFuncs.size()) {
+    mlir::Value nestedResult =
+        emitDispatchChain(builder, loc, genericFunc, staticFuncs, lengths,
+                          index + 1, sequenceLengthValue, wrapperArgs);
+    mlir::scf::YieldOp::create(builder, loc, mlir::ValueRange{nestedResult});
+  } else {
+    auto genericCall =
+        mlir::func::CallOp::create(builder, loc, genericFunc.getSymName(),
+                                   wrapperType.getResults(), wrapperArgs);
+    mlir::scf::YieldOp::create(builder, loc, genericCall.getResults());
+  }
+
+  builder.setInsertionPointAfter(dispatch);
+  return dispatch.getResult(0);
+}
+
 static void emitDispatchWrapper(mlir::func::FuncOp genericFunc,
-                                mlir::func::FuncOp staticFunc,
-                                llvm::StringRef wrapperName,
-                                int64_t sequenceLength) {
+                                llvm::ArrayRef<mlir::func::FuncOp> staticFuncs,
+                                llvm::ArrayRef<int64_t> lengths,
+                                llvm::StringRef wrapperName) {
   mlir::OpBuilder builder(genericFunc.getContext());
-  builder.setInsertionPointAfter(staticFunc);
+  builder.setInsertionPointAfter(staticFuncs.back());
   auto loc = genericFunc.getLoc();
   auto wrapperType = genericFunc.getFunctionType();
 
@@ -407,73 +493,49 @@ static void emitDispatchWrapper(mlir::func::FuncOp genericFunc,
       mlir::arith::ConstantIndexOp::create(builder, loc, kSequenceAxis);
   mlir::Value sequenceLengthValue =
       mlir::tensor::DimOp::create(builder, loc, input, sequenceAxis);
-  mlir::Value staticLengthValue =
-      mlir::arith::ConstantIndexOp::create(builder, loc, sequenceLength);
-  mlir::Value isStaticLength =
-      mlir::arith::CmpIOp::create(builder, loc, mlir::arith::CmpIPredicate::eq,
-                                  sequenceLengthValue, staticLengthValue);
 
-  auto staticFuncType = staticFunc.getFunctionType();
-  mlir::Type dynamicResultType = wrapperType.getResult(0);
-  mlir::Type staticInputType = staticFuncType.getInput(0);
-  mlir::Type staticResultType = staticFuncType.getResult(0);
-
-  auto dispatch = mlir::scf::IfOp::create(
-      builder, loc, wrapperType.getResults(), isStaticLength,
-      /*withElseRegion=*/true);
-
-  builder.setInsertionPointToStart(&dispatch.getThenRegion().front());
-  mlir::Value staticInput =
-      mlir::tensor::CastOp::create(builder, loc, staticInputType, input);
-  mlir::SmallVector<mlir::Value> staticOperands(body->getArguments().begin(),
-                                                body->getArguments().end());
-  staticOperands[0] = staticInput;
-
-  auto staticCall = mlir::func::CallOp::create(
-      builder, loc, staticFunc.getSymName(), mlir::TypeRange{staticResultType},
-      staticOperands);
-  mlir::Value dynamicResult = mlir::tensor::CastOp::create(
-      builder, loc, dynamicResultType, staticCall.getResult(0));
-  mlir::scf::YieldOp::create(builder, loc, mlir::ValueRange{dynamicResult});
-
-  builder.setInsertionPointToStart(&dispatch.getElseRegion().front());
-  mlir::SmallVector<mlir::Value> genericOperands(body->getArguments().begin(),
-                                                 body->getArguments().end());
-  auto genericCall =
-      mlir::func::CallOp::create(builder, loc, genericFunc.getSymName(),
-                                 wrapperType.getResults(), genericOperands);
-  mlir::scf::YieldOp::create(builder, loc, genericCall.getResults());
-
-  builder.setInsertionPointAfter(dispatch);
-  mlir::func::ReturnOp::create(builder, loc, dispatch.getResults());
+  mlir::Value result =
+      emitDispatchChain(builder, loc, genericFunc, staticFuncs, lengths, 0,
+                        sequenceLengthValue, body->getArguments());
+  mlir::func::ReturnOp::create(builder, loc, result);
 }
 
-static mlir::LogicalResult emitClone(mlir::ModuleOp module,
-                                     mlir::func::FuncOp entry,
-                                     int64_t sequenceLength) {
+static mlir::LogicalResult
+emitSpecializations(mlir::ModuleOp module, mlir::func::FuncOp entry,
+                    llvm::ArrayRef<int64_t> lengths) {
   mlir::SymbolTable symbolTable(module);
   std::string originalName = entry.getSymName().str();
   std::string genericName = originalName + "_generic";
-  std::string staticName = originalName + "_s" + std::to_string(sequenceLength);
 
   if (symbolTable.lookup(genericName))
     return module.emitError() << "symbol @" << genericName << " already exists";
-  if (symbolTable.lookup(staticName))
-    return module.emitError() << "symbol @" << staticName << " already exists";
+  for (int64_t length : lengths) {
+    std::string staticName = originalName + "_s" + std::to_string(length);
+    if (symbolTable.lookup(staticName))
+      return module.emitError()
+             << "symbol @" << staticName << " already exists";
+  }
 
   entry.setName(genericName);
   entry->removeAttr("shortseq.entry");
 
   mlir::OpBuilder builder(module.getBodyRegion());
-  builder.setInsertionPointAfter(entry);
-  mlir::IRMapping mapper;
-  auto staticFunc = entry.clone(mapper);
-  staticFunc.setName(staticName);
-  staticFunc.setPrivate();
-  refineStageAClone(staticFunc, sequenceLength);
+  mlir::Operation *insertAfter = entry.getOperation();
+  mlir::SmallVector<mlir::func::FuncOp> staticFuncs;
+  for (int64_t length : lengths) {
+    builder.setInsertionPointAfter(insertAfter);
+    mlir::IRMapping mapper;
+    auto staticFunc = entry.clone(mapper);
+    staticFunc.setName(originalName + "_s" + std::to_string(length));
+    staticFunc.setPrivate();
+    refineStageAClone(staticFunc, length);
 
-  builder.insert(staticFunc);
-  emitDispatchWrapper(entry, staticFunc, originalName, sequenceLength);
+    builder.insert(staticFunc);
+    staticFuncs.push_back(staticFunc);
+    insertAfter = staticFunc.getOperation();
+  }
+
+  emitDispatchWrapper(entry, staticFuncs, lengths, originalName);
 
   return mlir::success();
 }
@@ -483,6 +545,13 @@ class ShortSeqSpecializePass final
                                mlir::OperationPass<mlir::ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ShortSeqSpecializePass)
+
+  ShortSeqSpecializePass() = default;
+  ShortSeqSpecializePass(const ShortSeqSpecializePass &other)
+      : mlir::PassWrapper<ShortSeqSpecializePass,
+                          mlir::OperationPass<mlir::ModuleOp>>() {
+    lengths = other.lengths;
+  }
 
   void getDependentDialects(mlir::DialectRegistry &registry) const override {
     registry.insert<mlir::arith::ArithDialect, mlir::func::FuncDialect,
@@ -495,8 +564,18 @@ public:
     return "Validates the Stage A short-sequence MLP specialization contract";
   }
 
+  ListOption<int64_t> lengths{
+      *this, "lengths",
+      llvm::cl::desc("Comma-separated exact sequence lengths to specialize")};
+
   void runOnOperation() final {
     auto module = getOperation();
+
+    llvm::SmallVector<int64_t> parsedLengths(lengths.begin(), lengths.end());
+    if (mlir::failed(normalizeSpecializationLengths(module, parsedLengths))) {
+      signalPassFailure();
+      return;
+    }
 
     llvm::SmallVector<mlir::func::FuncOp> entries;
     for (auto func : module.getOps<mlir::func::FuncOp>()) {
@@ -524,7 +603,7 @@ public:
     }
 
     if (mlir::failed(
-            emitClone(module, entries.front(), kInitialSpecializationLength))) {
+            emitSpecializations(module, entries.front(), parsedLengths))) {
       signalPassFailure();
       return;
     }

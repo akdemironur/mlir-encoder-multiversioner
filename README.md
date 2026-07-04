@@ -98,7 +98,8 @@ To run only the parameter/artifact accounting check:
 uv run --frozen python scripts/check_parameter_accounting.py \
   --mlir-opt build/llvm/bin/mlir-opt \
   --plugin build/shortseq-pinned/lib/ShortSeqPasses.so \
-  --input examples/mlp/dynamic_mlp.mlir
+  --input examples/mlp/dynamic_mlp.mlir \
+  --lengths 4,8,16
 ```
 
 To run the initial S=16 MLIR runner benchmark:
@@ -173,4 +174,13 @@ build/llvm/bin/mlir-opt \
   --load-pass-plugin=build/shortseq-pinned/lib/ShortSeqPasses.so \
   --pass-pipeline='builtin.module(shortseq-specialize)' \
   test/mlp/pass-invocation.mlir
+```
+
+To emit several static variants and a dynamic fallback wrapper:
+
+```sh
+build/llvm/bin/mlir-opt \
+  --load-pass-plugin=build/shortseq-pinned/lib/ShortSeqPasses.so \
+  --pass-pipeline='builtin.module(shortseq-specialize{lengths=4,8,16})' \
+  examples/mlp/dynamic_mlp.mlir
 ```

@@ -17,7 +17,7 @@ except ImportError as exc:
 
 HIDDEN = 384
 INTERMEDIATE = 1536
-STATIC_LENGTH = 16
+STATIC_LENGTHS = (4, 8, 16)
 FALLBACK_LENGTHS = (1, 7, 24)
 RTOL = 2e-5
 ATOL = 2e-5
@@ -66,19 +66,26 @@ def mlp_generic(
     return mlp_body(x, parameters)
 
 
-def mlp_s16(
-    x: np.ndarray, parameters: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+def mlp_static(
+    x: np.ndarray,
+    parameters: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    sequence_length: int,
 ) -> np.ndarray:
-    if x.shape[1] != STATIC_LENGTH:
-        raise AssertionError(f"@mlp_s16 got S={x.shape[1]}, expected S=16")
+    if x.shape[1] != sequence_length:
+        raise AssertionError(
+            f"@mlp_s{sequence_length} got S={x.shape[1]}, "
+            f"expected S={sequence_length}"
+        )
     return mlp_body(x, parameters)
 
 
 def mlp(
-    x: np.ndarray, parameters: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+    x: np.ndarray,
+    parameters: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
 ) -> tuple[str, np.ndarray]:
-    if x.shape[1] == STATIC_LENGTH:
-        return "@mlp_s16", mlp_s16(x, parameters)
+    sequence_length = x.shape[1]
+    if sequence_length in STATIC_LENGTHS:
+        return f"@mlp_s{sequence_length}", mlp_static(x, parameters, sequence_length)
     return "@mlp_generic", mlp_generic(x, parameters)
 
 
@@ -88,17 +95,28 @@ def assert_close(label: str, actual: np.ndarray, expected: np.ndarray) -> None:
 
 def assert_path(actual: str, expected: str, sequence_length: int) -> None:
     if actual != expected:
-        raise AssertionError(f"S={sequence_length}: selected {actual}, expected {expected}")
+        raise AssertionError(
+            f"S={sequence_length}: selected {actual}, expected {expected}"
+        )
 
 
 def main() -> int:
     parameters = make_parameters()
 
-    x16 = make_input(STATIC_LENGTH)
-    selected, wrapper_y = mlp(x16, parameters)
-    assert_path(selected, "@mlp_s16", STATIC_LENGTH)
-    assert_close("S=16 wrapper vs static", wrapper_y, mlp_s16(x16, parameters))
-    assert_close("S=16 static vs generic", wrapper_y, mlp_generic(x16, parameters))
+    for sequence_length in STATIC_LENGTHS:
+        x = make_input(sequence_length)
+        selected, wrapper_y = mlp(x, parameters)
+        assert_path(selected, f"@mlp_s{sequence_length}", sequence_length)
+        assert_close(
+            f"S={sequence_length} wrapper vs static",
+            wrapper_y,
+            mlp_static(x, parameters, sequence_length),
+        )
+        assert_close(
+            f"S={sequence_length} static vs generic",
+            wrapper_y,
+            mlp_generic(x, parameters),
+        )
 
     for sequence_length in FALLBACK_LENGTHS:
         x = make_input(sequence_length)
@@ -110,7 +128,11 @@ def main() -> int:
             mlp_generic(x, parameters),
         )
 
-    print("PASS Stage A MLP numerics: S=16 static path and non-16 fallback match")
+    length_text = ",".join(str(length) for length in STATIC_LENGTHS)
+    print(
+        "PASS Stage A MLP numerics: "
+        f"static paths S={length_text} and generic fallback match"
+    )
     return 0
 
 

@@ -82,6 +82,7 @@ add_custom_target(check-shortseq
           --mlir-opt "${SHORTSEQ_MLIR_OPT}"
           --plugin "${SHORTSEQ_PLUGIN}"
           --input examples/mlp/dynamic_mlp.mlir
+          --lengths 4,8,16
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group bench python test/mlp/mlp_numerical.py
   DEPENDS ShortSeqPasses

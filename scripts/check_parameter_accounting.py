@@ -10,7 +10,9 @@ import sys
 from pathlib import Path
 
 
-CALL_RE = re.compile(r"func\.call @(?P<callee>mlp_s16|mlp_generic)\((?P<args>[^)]*)\)")
+CALL_RE = re.compile(
+    r"func\.call @(?P<callee>mlp_s\d+|mlp_generic)\((?P<args>[^)]*)\)"
+)
 ARG_RE = re.compile(r"(%[\w$._-]+)\s*:")
 WRAPPER_RE = re.compile(r"func\.func @mlp\((?P<args>[^)]*)\)")
 
@@ -22,14 +24,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input", default=Path("examples/mlp/dynamic_mlp.mlir"), type=Path
     )
+    parser.add_argument("--lengths", default="16")
     return parser.parse_args()
+
+
+def parse_lengths(text: str) -> list[int]:
+    lengths = [int(item.strip()) for item in text.split(",") if item.strip()]
+    if not lengths or any(length <= 0 for length in lengths):
+        raise ValueError("--lengths must contain positive integers")
+    if len(lengths) != len(set(lengths)):
+        raise ValueError("--lengths must not contain duplicates")
+    return sorted(lengths)
 
 
 def run_pass(args: argparse.Namespace) -> str:
     command = [
         str(args.mlir_opt),
         f"--load-pass-plugin={args.plugin}",
-        "--pass-pipeline=builtin.module(shortseq-specialize)",
+        "--pass-pipeline="
+        f"builtin.module(shortseq-specialize{{lengths={args.lengths}}})",
         str(args.input),
     ]
     completed = subprocess.run(
@@ -85,19 +98,21 @@ def check_no_dense_payloads(ir: str) -> None:
         raise AssertionError("transformed IR contains an embedded dense<...> payload")
 
 
-def check_parameter_forwarding(ir: str) -> None:
+def check_parameter_forwarding(ir: str, lengths: list[int]) -> None:
     wrapper_args, wrapper = parse_wrapper(ir)
     parameter_args = wrapper_args[1:5]
     calls = parse_call_args(wrapper)
 
-    static_operands = calls.get("mlp_s16")
-    if static_operands is None:
-        raise AssertionError("@mlp does not call @mlp_s16")
-    if static_operands[1:5] != parameter_args:
-        raise AssertionError(
-            "@mlp_s16 call does not forward wrapper parameter operands unchanged: "
-            f"got {static_operands[1:5]}, expected {parameter_args}"
-        )
+    for length in lengths:
+        callee = f"mlp_s{length}"
+        static_operands = calls.get(callee)
+        if static_operands is None:
+            raise AssertionError(f"@mlp does not call @{callee}")
+        if static_operands[1:5] != parameter_args:
+            raise AssertionError(
+                f"@{callee} call does not forward wrapper parameter operands "
+                f"unchanged: got {static_operands[1:5]}, expected {parameter_args}"
+            )
 
     generic_operands = calls.get("mlp_generic")
     if generic_operands is None:
@@ -111,14 +126,15 @@ def check_parameter_forwarding(ir: str) -> None:
 
 def main() -> int:
     args = parse_args()
+    lengths = parse_lengths(args.lengths)
     ir = run_pass(args)
 
     check_no_dense_payloads(ir)
-    check_parameter_forwarding(ir)
+    check_parameter_forwarding(ir, lengths)
 
     print(
         "PASS parameter accounting: no generated dense payloads; "
-        "@mlp forwards parameter operands to @mlp_s16 and @mlp_generic"
+        "@mlp forwards parameter operands to static variants and @mlp_generic"
     )
     return 0
 
