@@ -77,7 +77,13 @@ find_program(SHORTSEQ_UV
 
 add_custom_target(check-shortseq
   COMMAND "${LLVM_LIT}" -sv "${CMAKE_CURRENT_BINARY_DIR}/test"
-  COMMAND "${SHORTSEQ_UV}" run --frozen --group bench python test/mlp/mlp_numerical.py
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen python scripts/check_parameter_accounting.py
+          --mlir-opt "${SHORTSEQ_MLIR_OPT}"
+          --plugin "${SHORTSEQ_PLUGIN}"
+          --input examples/mlp/dynamic_mlp.mlir
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group bench python test/mlp/mlp_numerical.py
   DEPENDS ShortSeqPasses
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL

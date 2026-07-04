@@ -92,6 +92,72 @@ To run only the numerical harness:
 uv run --frozen --group bench python test/mlp/mlp_numerical.py
 ```
 
+To run only the parameter/artifact accounting check:
+
+```sh
+uv run --frozen python scripts/check_parameter_accounting.py \
+  --mlir-opt build/llvm/bin/mlir-opt \
+  --plugin build/shortseq-pinned/lib/ShortSeqPasses.so \
+  --input examples/mlp/dynamic_mlp.mlir
+```
+
+To run the initial S=16 MLIR runner benchmark:
+
+```sh
+uv run --frozen python benchmarks/bench_mlp_s16.py
+```
+
+By default the benchmark runs `5` warmup invocations, `25` timed invocations per
+repeat, and `10` repeats. It pins each `mlir-runner` process to the first CPU in
+the current affinity mask; use `--cpu N` to select a core, `--no-affinity` to
+disable pinning. Each variant reports MLIR size and simple lowered-IR counts
+for dims, branches, calls, allocs, and frees. Use `--dump-dir DIR` to keep
+generated/lowered MLIR; add `--dump-objects` to also keep runner objects and
+report `object_bytes`.
+
+Use `--pipeline affine` for the experimental affine-loop inspection path. Check
+`static_oracle` first; dispatch only matters after the oracle changes:
+
+```sh
+uv run --frozen python benchmarks/bench_mlp_s16.py \
+  --pipeline affine \
+  --dump-dir /tmp/shortseq-s16-affine
+```
+
+On the current i9-10850K topology, logical CPUs `9` and `19` are SMT siblings
+on physical core `9`. On a cgroups v2 system managed by systemd, move the
+normal userspace slices off that sibling pair, run the benchmark in its own
+slice, and pin the measured `mlir-runner` process to logical CPU `9`:
+
+```sh
+UV_BIN="$(command -v uv)"
+
+restore_cpus() {
+  for unit in system.slice user.slice init.scope; do
+    sudo systemctl set-property --runtime "$unit" AllowedCPUs=0-19
+  done
+}
+trap restore_cpus EXIT
+
+for unit in system.slice user.slice init.scope; do
+  sudo systemctl set-property --runtime "$unit" AllowedCPUs=0-8,10-18
+done
+
+sudo systemd-run --scope --collect --same-dir \
+  --slice=benchmark.slice \
+  --uid="$(id -u)" --gid="$(id -g)" \
+  -p AllowedCPUs=9,19 \
+  -E UV_CACHE_DIR=/tmp/shortseq-uv-cache \
+  "$UV_BIN" run --frozen python benchmarks/bench_mlp_s16.py --cpu 9
+
+restore_cpus
+trap - EXIT
+```
+
+This is runtime cgroup isolation for systemd-managed userspace. It does not
+fully isolate kernel work, IRQs, or firmware effects; use boot-time CPU
+isolation and IRQ affinity for stricter benchmark runs.
+
 To run the smoke test manually:
 
 ```sh
