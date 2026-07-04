@@ -70,8 +70,15 @@ find_program(LLVM_LIT
   REQUIRED
 )
 
+find_program(SHORTSEQ_UV
+  NAMES uv
+  REQUIRED
+)
+
 add_custom_target(check-shortseq
   COMMAND "${LLVM_LIT}" -sv "${CMAKE_CURRENT_BINARY_DIR}/test"
+  COMMAND "${SHORTSEQ_UV}" run --frozen --group bench python test/mlp/mlp_numerical.py
   DEPENDS ShortSeqPasses
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
 )

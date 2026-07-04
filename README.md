@@ -10,8 +10,8 @@ ignored by git; the pin is recorded in `toolchain/`.
 
 ## Prerequisites
 
-On Ubuntu, install the ordinary build tools plus clangd/clang for editor support
-and for compiling this pass:
+On Ubuntu, install the ordinary build tools, `uv` for the Python harness, and
+clangd/clang for editor support and for compiling this pass:
 
 ```sh
 sudo apt-get install \
@@ -52,19 +52,25 @@ cmake -G Ninja \
 
 ninja -C build/llvm -j8 \
   mlir-opt \
+  mlir-runner \
   FileCheck \
   not \
-  count
+  count \
+  mlir_c_runner_utils \
+  mlir_runner_utils
 ```
 
 This creates the tools and CMake package files used by the pass build:
 
 ```text
 build/llvm/bin/mlir-opt
+build/llvm/bin/mlir-runner
 build/llvm/bin/FileCheck
 build/llvm/bin/llvm-lit
 build/llvm/lib/cmake/llvm
 build/llvm/lib/cmake/mlir
+build/llvm/lib/libmlir_c_runner_utils.so
+build/llvm/lib/libmlir_runner_utils.so
 ```
 
 ## Build and test the pass
@@ -77,7 +83,14 @@ cmake --build --preset check-pinned-llvm22
 ```
 
 The check target builds `build/shortseq-pinned/lib/ShortSeqPasses.so` and runs
-the lit tests with the pinned `mlir-opt`.
+the lit tests with the pinned `mlir-opt`, then runs the deterministic NumPy
+numerical harness for the Stage A MLP dispatch contract.
+
+To run only the numerical harness:
+
+```sh
+uv run --frozen --group bench python test/mlp/mlp_numerical.py
+```
 
 To run the smoke test manually:
 
