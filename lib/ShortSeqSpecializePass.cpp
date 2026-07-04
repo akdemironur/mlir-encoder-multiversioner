@@ -6,6 +6,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Pass/Pass.h"
@@ -20,7 +21,7 @@ namespace {
 static constexpr int64_t kBatch = 1;
 static constexpr int64_t kHidden = 384;
 static constexpr int64_t kIntermediate = 1536;
-static constexpr int64_t kInitialLength = 16;
+static constexpr int64_t kInitialSpecializationLength = 16;
 static constexpr unsigned kSequenceAxis = 1;
 
 static mlir::RankedTensorType getF32TensorType(mlir::MLIRContext *context,
@@ -94,6 +95,184 @@ static mlir::LogicalResult validateParameter(mlir::func::FuncOp entry,
            << "expected " << name << " argument " << index
            << " to have type " << expected;
   return mlir::success();
+}
+
+static bool isDynamicRankedTensor(mlir::Type type) {
+  auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
+  return tensorType && !tensorType.hasStaticShape();
+}
+
+static bool isStageADynamicTensorType(mlir::Type type) {
+  auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
+  if (!tensorType || !tensorType.getElementType().isF32() ||
+      tensorType.hasStaticShape())
+    return false;
+
+  auto shape = tensorType.getShape();
+  return shape.equals({kBatch, mlir::ShapedType::kDynamic, kHidden}) ||
+         shape.equals({mlir::ShapedType::kDynamic, kHidden}) ||
+         shape.equals({mlir::ShapedType::kDynamic, kIntermediate});
+}
+
+static bool isStageAEmptyTensorType(mlir::Type type) {
+  auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
+  if (!tensorType || !tensorType.getElementType().isF32() ||
+      tensorType.hasStaticShape())
+    return false;
+
+  auto shape = tensorType.getShape();
+  return shape.equals({mlir::ShapedType::kDynamic, kHidden}) ||
+         shape.equals({mlir::ShapedType::kDynamic, kIntermediate});
+}
+
+static bool isIndexConstant(mlir::Value value, int64_t expected) {
+  auto *definingOp = value.getDefiningOp();
+  if (!definingOp || definingOp->getName().getStringRef() != "arith.constant")
+    return false;
+
+  auto intAttr = mlir::dyn_cast_if_present<mlir::IntegerAttr>(
+      definingOp->getAttr("value"));
+  return intAttr && intAttr.getInt() == expected;
+}
+
+static bool isEntrySequenceDim(mlir::Operation *op, mlir::Value entryInput) {
+  return op && op->getName().getStringRef() == "tensor.dim" &&
+         op->getNumOperands() == 2 && op->getNumResults() == 1 &&
+         op->getOperand(0) == entryInput &&
+         isIndexConstant(op->getOperand(1), kSequenceAxis);
+}
+
+static bool isSequenceLengthValue(mlir::Value value, mlir::Value entryInput) {
+  return isEntrySequenceDim(value.getDefiningOp(), entryInput);
+}
+
+static bool hasDynamicTensorOperandOrResult(mlir::Operation *op) {
+  for (mlir::Value operand : op->getOperands()) {
+    if (isDynamicRankedTensor(operand.getType()))
+      return true;
+  }
+  for (mlir::Value result : op->getResults()) {
+    if (isDynamicRankedTensor(result.getType()))
+      return true;
+  }
+  return false;
+}
+
+static bool isAllowedStageADynamicTensorOp(mlir::Operation *op) {
+  llvm::StringRef name = op->getName().getStringRef();
+  return name == "func.return" || name == "tensor.dim" ||
+         name == "tensor.empty" || name == "tensor.collapse_shape" ||
+         name == "linalg.fill" || name == "linalg.matmul" ||
+         name == "linalg.generic" || name == "tensor.expand_shape";
+}
+
+static mlir::LogicalResult
+validateDynamicTensorValueTypes(mlir::func::FuncOp entry, mlir::Operation *op) {
+  for (mlir::Value operand : op->getOperands()) {
+    if (isDynamicRankedTensor(operand.getType()) &&
+        !isStageADynamicTensorType(operand.getType()))
+      return op->emitError() << "in @" << entry.getSymName()
+                             << ", unsupported dynamic tensor operand type "
+                             << operand.getType();
+  }
+
+  for (mlir::Value result : op->getResults()) {
+    if (isDynamicRankedTensor(result.getType()) &&
+        !isStageADynamicTensorType(result.getType()))
+      return op->emitError()
+             << "in @" << entry.getSymName()
+             << ", unsupported dynamic tensor result type " << result.getType();
+  }
+
+  return mlir::success();
+}
+
+static mlir::LogicalResult validateDynamicEmpty(mlir::func::FuncOp entry,
+                                                mlir::Operation *op,
+                                                mlir::Value entryInput) {
+  if (op->getName().getStringRef() != "tensor.empty" ||
+      op->getNumResults() != 1)
+    return mlir::success();
+
+  auto resultType =
+      mlir::dyn_cast<mlir::RankedTensorType>(op->getResult(0).getType());
+  if (!resultType || resultType.hasStaticShape())
+    return mlir::success();
+
+  if (!isStageAEmptyTensorType(resultType))
+    return op->emitError()
+           << "in @" << entry.getSymName()
+           << ", unsupported dynamic tensor.empty result type " << resultType
+           << "; expected tensor<?x384xf32> or tensor<?x1536xf32>";
+
+  if (op->getNumOperands() != 1 ||
+      !isSequenceLengthValue(op->getOperand(0), entryInput))
+    return op->emitError()
+           << "in @" << entry.getSymName()
+           << ", dynamic tensor.empty size must be tensor.dim of entry "
+              "argument 0 at axis 1";
+
+  return mlir::success();
+}
+
+static mlir::LogicalResult validateDynamicExpandShape(mlir::func::FuncOp entry,
+                                                      mlir::Operation *op,
+                                                      mlir::Value entryInput) {
+  if (op->getName().getStringRef() != "tensor.expand_shape" ||
+      op->getNumResults() != 1)
+    return mlir::success();
+
+  auto resultType =
+      mlir::dyn_cast<mlir::RankedTensorType>(op->getResult(0).getType());
+  if (!resultType || resultType.hasStaticShape())
+    return mlir::success();
+
+  auto expectedResultType = getF32TensorType(
+      entry.getContext(), {kBatch, mlir::ShapedType::kDynamic, kHidden});
+  if (resultType != expectedResultType)
+    return op->emitError()
+           << "in @" << entry.getSymName()
+           << ", unsupported dynamic tensor.expand_shape result type "
+           << resultType;
+
+  if (op->getNumOperands() != 2 ||
+      !isSequenceLengthValue(op->getOperand(1), entryInput))
+    return op->emitError()
+           << "in @" << entry.getSymName()
+           << ", dynamic tensor.expand_shape output shape must use "
+              "tensor.dim of entry argument 0 at axis 1";
+
+  return mlir::success();
+}
+
+static mlir::LogicalResult validateStageAMlpBody(mlir::func::FuncOp entry) {
+  mlir::Value entryInput = entry.getArgument(0);
+
+  mlir::LogicalResult result = mlir::success();
+  mlir::WalkResult walkResult = entry.walk([&](mlir::Operation *op) {
+    if (!hasDynamicTensorOperandOrResult(op))
+      return mlir::WalkResult::advance();
+
+    if (!isAllowedStageADynamicTensorOp(op)) {
+      result = op->emitError() << "in @" << entry.getSymName()
+                               << ", unsupported dynamic tensor operation "
+                               << op->getName().getStringRef();
+      return mlir::WalkResult::interrupt();
+    }
+
+    if (mlir::failed(validateDynamicEmpty(entry, op, entryInput)) ||
+        mlir::failed(validateDynamicExpandShape(entry, op, entryInput)) ||
+        mlir::failed(validateDynamicTensorValueTypes(entry, op))) {
+      result = mlir::failure();
+      return mlir::WalkResult::interrupt();
+    }
+
+    return mlir::WalkResult::advance();
+  });
+
+  if (walkResult.wasInterrupted())
+    return mlir::failure();
+  return result;
 }
 
 static mlir::LogicalResult validateStageAMlpEntry(mlir::func::FuncOp entry) {
@@ -276,7 +455,13 @@ public:
       return;
     }
 
-    if (mlir::failed(emitClone(module, entries.front(), kInitialLength))) {
+    if (mlir::failed(validateStageAMlpBody(entries.front()))) {
+      signalPassFailure();
+      return;
+    }
+
+    if (mlir::failed(
+            emitClone(module, entries.front(), kInitialSpecializationLength))) {
       signalPassFailure();
       return;
     }
