@@ -6,6 +6,8 @@ dependencies = []
 
 [dependency-groups]
 bench = [
+    "iree-compiler==20241104.1068",
+    "iree-runtime==20241104.1068",
     "numpy>=2.5.0",
 ]
 dev = [

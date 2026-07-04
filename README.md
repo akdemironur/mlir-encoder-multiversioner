@@ -124,6 +124,14 @@ uv run --frozen python benchmarks/bench_mlp_s16.py \
   --dump-dir /tmp/shortseq-s16-affine
 ```
 
+To run the IREE CPU benchmark for selected sequence lengths:
+
+```sh
+uv run --frozen --group bench python benchmarks/bench_iree.py \
+  --lengths 16,1024,4096 \
+  --dump-dir /tmp/shortseq-iree
+```
+
 On the current i9-10850K topology, logical CPUs `9` and `19` are SMT siblings
 on physical core `9`. On a cgroups v2 system managed by systemd, move the
 normal userspace slices off that sibling pair, run the benchmark in its own

@@ -35,3 +35,38 @@ Lowered IR inspection:
 
 This only describes the current bufferization plus scalar loop runner path. It
 does not rule out backend benefits from static shapes.
+
+## 2026-07-04: IREE CPU Backend Snapshot
+
+Command:
+
+```sh
+uv run --frozen --group bench python benchmarks/bench_iree.py \
+  --lengths 16,1024,4096 \
+  --dump-dir /tmp/shortseq-iree
+```
+
+IREE compiler/runtime: `20241104.1068`. Backend flags:
+`--iree-hal-target-backends=llvm-cpu --iree-llvmcpu-target-cpu=host`.
+
+Results from this run, pinned to CPU 0 by the benchmark harness:
+
+```text
+S=16
+dynamic_generic:    median_ms=0.299986 min_ms=0.293628 max_ms=0.307495 compile_s=0.550 vmfb_bytes=20700
+static_oracle:      median_ms=0.349061 min_ms=0.342736 max_ms=0.352184 compile_s=0.548 vmfb_bytes=18596
+dispatched_wrapper: median_ms=0.306506 min_ms=0.302693 max_ms=0.312045 compile_s=0.663 vmfb_bytes=32004
+
+S=1024
+dynamic_generic:    median_ms=5.744224 min_ms=5.537175 max_ms=5.962861 compile_s=0.544 vmfb_bytes=20700
+static_oracle:      median_ms=5.676205 min_ms=5.493576 max_ms=5.891766 compile_s=0.528 vmfb_bytes=18532
+
+S=4096
+dynamic_generic:    median_ms=24.395650 min_ms=23.679063 max_ms=25.258560 compile_s=0.548 vmfb_bytes=20700
+static_oracle:      median_ms=23.413159 min_ms=22.771027 max_ms=24.275000 compile_s=0.527 vmfb_bytes=18532
+```
+
+Takeaway: `S=16` still shows no static-oracle win and the dispatched artifact is
+larger. `S=4096` shows a static-oracle win in this run, but that is not enough
+to add a dispatch length without routing tests, numerical tests, and full
+artifact accounting.

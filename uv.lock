@@ -21,12 +21,55 @@ wheels = [
 ]
 
 [[package]]
+name = "iree-compiler"
+version = "20241104.1068"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "sympy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/86/1bd674964d67effad4d9187afa75814ce8505bb6998b4e1bdaa73a46e355/iree_compiler-20241104.1068-cp312-cp312-macosx_13_0_universal2.whl", hash = "sha256:2077182344235f75b8c7707586f24a3b68d556ccc5771e0926f14819d6115e03", size = 57591226, upload-time = "2024-11-05T23:33:58.704Z" },
+    { url = "https://files.pythonhosted.org/packages/28/ee/4e6bbeace037bb449dd539912afcba3ea5a88f2fe9494d74161a200f1532/iree_compiler-20241104.1068-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:87f49105a10825a68055226e7e3fbf313590d766ad208ab70d35f6ab79044775", size = 71931372, upload-time = "2024-11-05T23:34:04.302Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/6e/87756b7be8b2235c398283589e7591f917b8df4c5cef1d660ea43d15ec85/iree_compiler-20241104.1068-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:39eb1c01a208399c844ac961ef52aeb6be780db4f87fac59ceeb59b8d8c68719", size = 70763482, upload-time = "2024-11-05T23:34:10.82Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/c5/ccb4a5355c3231d2d9d55740b4024cf6b1f3a1155a1a5268db0425c59ca3/iree_compiler-20241104.1068-cp312-cp312-win_amd64.whl", hash = "sha256:2e7e88b4e63caf529c0ad4f1e55cfd7624e0ac0bf4034cd7e0f935f23251073c", size = 49804740, upload-time = "2024-11-05T23:34:15.776Z" },
+    { url = "https://files.pythonhosted.org/packages/27/96/1b982d87add6118ac4afb09790fc020000818636c675d31ea6cef2484b63/iree_compiler-20241104.1068-cp313-cp313-macosx_13_0_universal2.whl", hash = "sha256:ec522b9abf8b8375f6d36c71025dd93e53d033571125476ee4495bcf1a79c355", size = 57592644, upload-time = "2024-11-05T23:34:21.128Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/e9/3d07d305f38655bd8b15fba78f7e517bd61c0d80c880c62b1a0205e8c152/iree_compiler-20241104.1068-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e681d701bf8742f7eff15e3ecae7cffd15f07c67d50d0a76aa0f9e47ef5a5259", size = 71931292, upload-time = "2024-11-05T23:34:26.486Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/00/49e9ab9be2d34aebc8126642bdad101508010cfc16397ba5d61be4ddaf02/iree_compiler-20241104.1068-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:77cec392929afb4cbfb5cb58e9f0a6f65767d97a4a3a0939ee7f537a514b3dea", size = 70763956, upload-time = "2024-11-05T23:34:33.671Z" },
+    { url = "https://files.pythonhosted.org/packages/18/41/137e323b7bc74974d147ebb76c2b959871db666a5f2063f711286af7a456/iree_compiler-20241104.1068-cp313-cp313-win_amd64.whl", hash = "sha256:9ee4298a94fa92bb1a9a7546a94be71dd49c81b16e0f38f8f1a8ccd74f8b014b", size = 49804757, upload-time = "2024-11-05T23:34:53.497Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/bf/4055a81bb98c42dc4e96b01a37d48b8666278b75820e3876f4ba8bfe3d9a/iree_compiler-20241104.1068-cp313-cp313t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:bb3cd1253976408dc8382be403a95f8158fb419edeb6c54d54003def57a83a41", size = 72069014, upload-time = "2024-11-05T23:34:41.671Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/06/cc8197584f8d926eb9479297929dcf343504829a03640e449b7e337497ea/iree_compiler-20241104.1068-cp313-cp313t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:83e40093462c3c7047ebfa134c0a2130b2adbaa0325778515f5009335eea0dd1", size = 70878973, upload-time = "2024-11-05T23:34:47.66Z" },
+]
+
+[[package]]
+name = "iree-runtime"
+version = "20241104.1068"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/21/e4/aebf18d31aa0a9c820371a97bdd3f9834f780ab5aeeebcad751139555acf/iree_runtime-20241104.1068-cp312-cp312-macosx_13_0_universal2.whl", hash = "sha256:4a0c52dfe2443bdc47c2990d55423579d9cd9e0da7d0df50c685d6b8b474c3ee", size = 3812435, upload-time = "2024-11-05T23:43:46.595Z" },
+    { url = "https://files.pythonhosted.org/packages/92/ec/4eab1dd626d2e7e48c424c31678196a622d0374b0f718091e809464ee75f/iree_runtime-20241104.1068-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:488efb65428d0525bfec628380c49662cd27a7a3f2fb510e9b0f50fa0058fa47", size = 7940985, upload-time = "2024-11-05T23:43:49.128Z" },
+    { url = "https://files.pythonhosted.org/packages/33/1e/f55daece2adafb20c3ae23ba6a78cf582a7aa1b1ff468d3c4e4d92fcd899/iree_runtime-20241104.1068-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:38a052b97c81a71c6c5c7a82e8395d0537bd88cbf0e2847575512464a7f04f8c", size = 8041669, upload-time = "2024-11-05T23:43:51.498Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/7c/17976da37bd02e508e6f8062a6eb5396f2d69f80346ced04ef213b7d9a56/iree_runtime-20241104.1068-cp312-cp312-win_amd64.whl", hash = "sha256:8f1b288773a63ef0289ab492396cc12399e1fcd6e5c6841547a4f6f658143c50", size = 5283903, upload-time = "2024-11-05T23:43:53.861Z" },
+    { url = "https://files.pythonhosted.org/packages/39/23/7d26c7bf70ed6c5d39450e27e466eb6bb0f99c8d1d63b87df49cca845377/iree_runtime-20241104.1068-cp313-cp313-macosx_13_0_universal2.whl", hash = "sha256:820a4c881589caefea0eff331f6171b17a15cfda400214cdc79d911d1c9fe9b4", size = 3812405, upload-time = "2024-11-05T23:43:56.173Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/5f/264a0b3cd5a789c87c5308b9ac6898cb5c1d5bd3d9fb057b58a22c5d5ed7/iree_runtime-20241104.1068-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:849a41f3141443857fb6858c855a5f48e7bd2f9979b44c6666cebe08686c239f", size = 7940909, upload-time = "2024-11-05T23:43:59.153Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/10/73323398958da41e7d1e9d00c40c8c93041ede54c4118a5c54980a8abafe/iree_runtime-20241104.1068-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:ed59ae027d860fd924493772f0fe8f63b794b121fe487d4bf9652a66486fdbbb", size = 8041592, upload-time = "2024-11-05T23:44:01.941Z" },
+    { url = "https://files.pythonhosted.org/packages/95/32/1ad033240ee2f6d214c77aee4588c11ebc46d6d09af5cf003bb561e904b7/iree_runtime-20241104.1068-cp313-cp313-win_amd64.whl", hash = "sha256:1d51e504b7afa980d3784e7e52df99166d438177bf55b7558a962ae73eb96c2e", size = 5283963, upload-time = "2024-11-05T23:44:10.216Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/b9/945f157d9d8fe45e33d90e39a9c6b04b6ee38f465d0677911dbb72f5963a/iree_runtime-20241104.1068-cp313-cp313t-manylinux_2_28_aarch64.whl", hash = "sha256:ababebdca6044f336bc3ce76f9e709c8cacf9e6b538e62d35c93cfce7967eb6b", size = 7959429, upload-time = "2024-11-05T23:44:04.611Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/08/f9fbb1a7b1defece46a7b1704ad1b6b18fb1d118a470fb30cd0866a2a001/iree_runtime-20241104.1068-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:0a61714ed4ed2b18e37b618596b9a05fcb2f8f2897a37dc2e4d09a3073833dfe", size = 8053995, upload-time = "2024-11-05T23:44:07.259Z" },
+]
+
+[[package]]
 name = "mlir-encoder-multiversioner"
 version = "0.1.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
 bench = [
+    { name = "iree-compiler" },
+    { name = "iree-runtime" },
     { name = "numpy" },
 ]
 dev = [
@@ -37,10 +80,23 @@ dev = [
 [package.metadata]
 
 [package.metadata.requires-dev]
-bench = [{ name = "numpy", specifier = ">=2.5.0" }]
+bench = [
+    { name = "iree-compiler", specifier = "==20241104.1068" },
+    { name = "iree-runtime", specifier = "==20241104.1068" },
+    { name = "numpy", specifier = ">=2.5.0" },
+]
 dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.15.20" },
+]
+
+[[package]]
+name = "mpmath"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/47/dd32fa426cc72114383ac549964eecb20ecfd886d1e5ccf5340b55b02f57/mpmath-1.3.0.tar.gz", hash = "sha256:7a28eb2a9774d00c7bc92411c19a89209d5da7c4c9a9e227be8330a23a25b91f", size = 508106, upload-time = "2023-03-07T16:47:11.061Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl", hash = "sha256:a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c", size = 536198, upload-time = "2023-03-07T16:47:09.197Z" },
 ]
 
 [[package]]
@@ -160,4 +216,16 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/10/9b/5f14927848d2fd4aa891fd88d883788c5a7baba561c7874732364045708c/ruff-0.15.20-py3-none-win32.whl", hash = "sha256:ed65ef510e43a137207e0f01cfcf998aeddb1aeeda5c9d35023e910284d7cf21", size = 10857322, upload-time = "2026-06-25T17:20:28.612Z" },
     { url = "https://files.pythonhosted.org/packages/fa/f0/fe47c501f9dea92a26d788ff98bb5d92ed4cb4c88792c5c88af6b697dc8e/ruff-0.15.20-py3-none-win_amd64.whl", hash = "sha256:a525c81c70fb0380344dd1d8745d8cc1c890b7fc94a58d5a07bd8eb9557b8415", size = 11993274, upload-time = "2026-06-25T17:20:31.871Z" },
     { url = "https://files.pythonhosted.org/packages/d7/2b/9555445e1201d92b3195f45cdb153a0b68f24e0a4273f6e3d5ab46e212bb/ruff-0.15.20-py3-none-win_arm64.whl", hash = "sha256:2f5b2a6d614e8700388806a14996c40fab2c47b819ef57d790a34878858ed9ca", size = 11343498, upload-time = "2026-06-25T17:20:35.03Z" },
+]
+
+[[package]]
+name = "sympy"
+version = "1.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mpmath" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517", size = 7793921, upload-time = "2025-04-27T18:05:01.611Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl", hash = "sha256:e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5", size = 6299353, upload-time = "2025-04-27T18:04:59.103Z" },
 ]
