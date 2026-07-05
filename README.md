@@ -200,10 +200,17 @@ build/llvm/bin/mlir-opt \
 There is also an experimental Stage B tiny encoder fixture. It uses
 pre-embedded `tensor<1x?x64xf32>` input with synthetic parameter operands; token
 ids, embedding lookup, masks, and real model artifacts are still out of scope.
+The adapter boundary example keeps that split explicit: unmarked adapter code
+produces pre-embedded f32 activations, and only `@encoder` is specialized.
 
 ```sh
 build/llvm/bin/mlir-opt \
   --load-pass-plugin=build/shortseq-pinned/lib/ShortSeqPasses.so \
   --pass-pipeline='builtin.module(shortseq-specialize{lengths=4,8,16})' \
   examples/stage_b/tiny_gemma_encoder.mlir
+
+build/llvm/bin/mlir-opt \
+  --load-pass-plugin=build/shortseq-pinned/lib/ShortSeqPasses.so \
+  --pass-pipeline='builtin.module(shortseq-specialize{lengths=4,8})' \
+  examples/stage_b/preembed_adapter_boundary.mlir
 ```

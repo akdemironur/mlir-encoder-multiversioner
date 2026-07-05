@@ -8,21 +8,31 @@
 
 // CHECK-LABEL: func.func @encoder_generic(
 // CHECK-SAME: tensor<1x?x64xf32>
+// CHECK-NOT: shortseq.entry
+// CHECK-NOT: shortseq.stage_b
 
 // CHECK-LABEL: func.func private @encoder_s4(
 // CHECK-SAME: tensor<1x4x64xf32>
 // CHECK: -> tensor<1x4x64xf32>
+// CHECK-NOT: shortseq.entry
+// CHECK-NOT: shortseq.stage_b
 
 // CHECK-LABEL: func.func private @encoder_s8(
 // CHECK-SAME: tensor<1x8x64xf32>
 // CHECK: -> tensor<1x8x64xf32>
+// CHECK-NOT: shortseq.entry
+// CHECK-NOT: shortseq.stage_b
 
 // CHECK-LABEL: func.func private @encoder_s16(
 // CHECK-SAME: tensor<1x16x64xf32>
 // CHECK: -> tensor<1x16x64xf32>
+// CHECK-NOT: shortseq.entry
+// CHECK-NOT: shortseq.stage_b
 
 // CHECK-LABEL: func.func @encoder(
 // CHECK-SAME: %[[X:.*]]: tensor<1x?x64xf32>
+// CHECK-NOT: shortseq.entry
+// CHECK-NOT: shortseq.stage_b
 // CHECK: %[[SEQ:.*]] = tensor.dim %[[X]], %{{.*}} : tensor<1x?x64xf32>
 // CHECK: %[[C4:.*]] = arith.constant 4 : index
 // CHECK: %[[IS4:.*]] = arith.cmpi eq, %[[SEQ]], %[[C4]] : index
