@@ -11,7 +11,7 @@ try:
 except ImportError as exc:
     raise SystemExit(
         "NumPy is required. Run with: "
-        "uv run --frozen --group bench python test/mlp/mlp_numerical.py"
+        "uv run --frozen --group numerical python test/mlp/mlp_numerical.py"
     ) from exc
 
 

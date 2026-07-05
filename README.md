@@ -89,7 +89,7 @@ and numerical checks.
 To run only the numerical harness:
 
 ```sh
-uv run --frozen --group bench python test/mlp/mlp_numerical.py
+uv run --frozen --group numerical python test/mlp/mlp_numerical.py
 ```
 
 To run only the parameter/artifact accounting check:
@@ -111,7 +111,7 @@ uv run --frozen python scripts/check_parameter_accounting.py \
   --input examples/stage_b/tiny_gemma_encoder.mlir \
   --entry encoder \
   --lengths 4,8,16
-uv run --frozen --group bench python test/stage_b/tiny_gemma_numerical.py
+uv run --frozen --group numerical python test/stage_b/tiny_gemma_numerical.py
 ```
 
 To run the initial S=16 MLIR runner benchmark:

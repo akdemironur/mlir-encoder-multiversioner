@@ -5,6 +5,9 @@ requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]
+numerical = [
+    "numpy>=2.5.0",
+]
 bench = [
     "iree-compiler==20241104.1068",
     "iree-runtime==20241104.1068",
