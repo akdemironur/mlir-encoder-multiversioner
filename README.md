@@ -82,9 +82,9 @@ cmake --preset pinned-llvm22
 cmake --build --preset check-pinned-llvm22
 ```
 
-The check target builds `build/shortseq-pinned/lib/ShortSeqPasses.so` and runs
-the lit tests with the pinned `mlir-opt`, then runs the deterministic NumPy
-numerical harness for the Stage A MLP dispatch contract.
+The check target builds `build/shortseq-pinned/lib/ShortSeqPasses.so`, runs the
+lit tests with the pinned `mlir-opt`, and runs the Stage A/Stage B accounting
+and numerical checks.
 
 To run only the numerical harness:
 
@@ -100,6 +100,18 @@ uv run --frozen python scripts/check_parameter_accounting.py \
   --plugin build/shortseq-pinned/lib/ShortSeqPasses.so \
   --input examples/mlp/dynamic_mlp.mlir \
   --lengths 4,8,16
+```
+
+For the Stage B fixture, use:
+
+```sh
+uv run --frozen python scripts/check_parameter_accounting.py \
+  --mlir-opt build/llvm/bin/mlir-opt \
+  --plugin build/shortseq-pinned/lib/ShortSeqPasses.so \
+  --input examples/stage_b/tiny_gemma_encoder.mlir \
+  --entry encoder \
+  --lengths 4,8,16
+uv run --frozen --group bench python test/stage_b/tiny_gemma_numerical.py
 ```
 
 To run the initial S=16 MLIR runner benchmark:
@@ -183,4 +195,15 @@ build/llvm/bin/mlir-opt \
   --load-pass-plugin=build/shortseq-pinned/lib/ShortSeqPasses.so \
   --pass-pipeline='builtin.module(shortseq-specialize{lengths=4,8,16})' \
   examples/mlp/dynamic_mlp.mlir
+```
+
+There is also an experimental Stage B tiny encoder fixture. It uses
+pre-embedded `tensor<1x?x64xf32>` input with synthetic parameter operands; token
+ids, embedding lookup, masks, and real model artifacts are still out of scope.
+
+```sh
+build/llvm/bin/mlir-opt \
+  --load-pass-plugin=build/shortseq-pinned/lib/ShortSeqPasses.so \
+  --pass-pipeline='builtin.module(shortseq-specialize{lengths=4,8,16})' \
+  examples/stage_b/tiny_gemma_encoder.mlir
 ```

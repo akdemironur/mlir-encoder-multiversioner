@@ -25,10 +25,26 @@ namespace shortseq {
 namespace {
 
 static constexpr int64_t kBatch = 1;
-static constexpr int64_t kHidden = 384;
-static constexpr int64_t kIntermediate = 1536;
+static constexpr int64_t kStageAHidden = 384;
+static constexpr int64_t kStageAIntermediate = 1536;
+static constexpr int64_t kStageBHidden = 64;
+static constexpr int64_t kStageBIntermediate = 256;
 static constexpr int64_t kDefaultLength = 16;
 static constexpr unsigned kSequenceAxis = 1;
+
+struct SpecializationContract {
+  llvm::StringRef name;
+  int64_t hidden;
+  int64_t intermediate;
+};
+
+static SpecializationContract getStageAContract() {
+  return {"Stage A MLP", kStageAHidden, kStageAIntermediate};
+}
+
+static SpecializationContract getStageBContract() {
+  return {"Stage B tiny encoder", kStageBHidden, kStageBIntermediate};
+}
 
 static mlir::LogicalResult
 normalizeSpecializationLengths(mlir::ModuleOp module,
@@ -67,15 +83,18 @@ static unsigned countDynamicDims(mlir::RankedTensorType tensorType) {
   return count;
 }
 
-static mlir::LogicalResult validateInput(mlir::func::FuncOp entry,
-                                         mlir::Type type) {
+static mlir::LogicalResult
+validateSequenceInput(mlir::func::FuncOp entry, mlir::Type type,
+                      SpecializationContract contract) {
   auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
   if (!tensorType)
-    return entry.emitError()
-           << "expected input argument 0 to be ranked tensor<1x?x384xf32>";
+    return entry.emitError() << "expected " << contract.name
+                             << " input argument 0 to be ranked tensor<1x?x"
+                             << contract.hidden << "xf32>";
 
   if (!tensorType.getElementType().isF32())
-    return entry.emitError() << "expected input argument 0 element type f32";
+    return entry.emitError() << "expected " << contract.name
+                             << " input argument 0 element type f32";
 
   if (tensorType.getRank() != 3)
     return entry.emitError() << "expected input argument 0 to have rank 3";
@@ -92,9 +111,9 @@ static mlir::LogicalResult validateInput(mlir::func::FuncOp entry,
   if (!mlir::ShapedType::isDynamic(tensorType.getDimSize(kSequenceAxis)))
     return entry.emitError() << "expected dynamic sequence dimension at axis 1";
 
-  if (tensorType.getDimSize(2) != kHidden)
-    return entry.emitError()
-           << "expected hidden dimension 384, got " << tensorType.getDimSize(2);
+  if (tensorType.getDimSize(2) != contract.hidden)
+    return entry.emitError() << "expected hidden dimension " << contract.hidden
+                             << ", got " << tensorType.getDimSize(2);
 
   return mlir::success();
 }
@@ -125,27 +144,29 @@ static bool isDynamicRankedTensor(mlir::Type type) {
   return tensorType && !tensorType.hasStaticShape();
 }
 
-static bool isStageADynamicTensorType(mlir::Type type) {
+static bool isContractDynamicTensorType(mlir::Type type,
+                                        SpecializationContract contract) {
   auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
   if (!tensorType || !tensorType.getElementType().isF32() ||
       tensorType.hasStaticShape())
     return false;
 
   auto shape = tensorType.getShape();
-  return shape.equals({kBatch, mlir::ShapedType::kDynamic, kHidden}) ||
-         shape.equals({mlir::ShapedType::kDynamic, kHidden}) ||
-         shape.equals({mlir::ShapedType::kDynamic, kIntermediate});
+  return shape.equals({kBatch, mlir::ShapedType::kDynamic, contract.hidden}) ||
+         shape.equals({mlir::ShapedType::kDynamic, contract.hidden}) ||
+         shape.equals({mlir::ShapedType::kDynamic, contract.intermediate});
 }
 
-static bool isStageAEmptyTensorType(mlir::Type type) {
+static bool isContractEmptyTensorType(mlir::Type type,
+                                      SpecializationContract contract) {
   auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
   if (!tensorType || !tensorType.getElementType().isF32() ||
       tensorType.hasStaticShape())
     return false;
 
   auto shape = tensorType.getShape();
-  return shape.equals({mlir::ShapedType::kDynamic, kHidden}) ||
-         shape.equals({mlir::ShapedType::kDynamic, kIntermediate});
+  return shape.equals({mlir::ShapedType::kDynamic, contract.hidden}) ||
+         shape.equals({mlir::ShapedType::kDynamic, contract.intermediate});
 }
 
 static bool isIndexConstant(mlir::Value value, int64_t expected) {
@@ -181,7 +202,7 @@ static bool hasDynamicTensorOperandOrResult(mlir::Operation *op) {
   return false;
 }
 
-static bool isAllowedStageADynamicTensorOp(mlir::Operation *op) {
+static bool isAllowedDynamicTensorOp(mlir::Operation *op) {
   llvm::StringRef name = op->getName().getStringRef();
   return name == "func.return" || name == "tensor.dim" ||
          name == "tensor.empty" || name == "tensor.collapse_shape" ||
@@ -190,10 +211,11 @@ static bool isAllowedStageADynamicTensorOp(mlir::Operation *op) {
 }
 
 static mlir::LogicalResult
-validateDynamicTensorValueTypes(mlir::func::FuncOp entry, mlir::Operation *op) {
+validateDynamicTensorValueTypes(mlir::func::FuncOp entry, mlir::Operation *op,
+                                SpecializationContract contract) {
   for (mlir::Value operand : op->getOperands()) {
     if (isDynamicRankedTensor(operand.getType()) &&
-        !isStageADynamicTensorType(operand.getType()))
+        !isContractDynamicTensorType(operand.getType(), contract))
       return op->emitError() << "in @" << entry.getSymName()
                              << ", unsupported dynamic tensor operand type "
                              << operand.getType();
@@ -201,7 +223,7 @@ validateDynamicTensorValueTypes(mlir::func::FuncOp entry, mlir::Operation *op) {
 
   for (mlir::Value result : op->getResults()) {
     if (isDynamicRankedTensor(result.getType()) &&
-        !isStageADynamicTensorType(result.getType()))
+        !isContractDynamicTensorType(result.getType(), contract))
       return op->emitError()
              << "in @" << entry.getSymName()
              << ", unsupported dynamic tensor result type " << result.getType();
@@ -210,9 +232,9 @@ validateDynamicTensorValueTypes(mlir::func::FuncOp entry, mlir::Operation *op) {
   return mlir::success();
 }
 
-static mlir::LogicalResult validateDynamicEmpty(mlir::func::FuncOp entry,
-                                                mlir::Operation *op,
-                                                mlir::Value entryInput) {
+static mlir::LogicalResult
+validateDynamicEmpty(mlir::func::FuncOp entry, mlir::Operation *op,
+                     mlir::Value entryInput, SpecializationContract contract) {
   if (op->getName().getStringRef() != "tensor.empty" ||
       op->getNumResults() != 1)
     return mlir::success();
@@ -222,11 +244,12 @@ static mlir::LogicalResult validateDynamicEmpty(mlir::func::FuncOp entry,
   if (!resultType || resultType.hasStaticShape())
     return mlir::success();
 
-  if (!isStageAEmptyTensorType(resultType))
-    return op->emitError()
-           << "in @" << entry.getSymName()
-           << ", unsupported dynamic tensor.empty result type " << resultType
-           << "; expected tensor<?x384xf32> or tensor<?x1536xf32>";
+  if (!isContractEmptyTensorType(resultType, contract))
+    return op->emitError() << "in @" << entry.getSymName()
+                           << ", unsupported dynamic tensor.empty result type "
+                           << resultType << "; expected tensor<?x"
+                           << contract.hidden << "xf32> or tensor<?x"
+                           << contract.intermediate << "xf32>";
 
   if (op->getNumOperands() != 1 ||
       !isSequenceLengthValue(op->getOperand(0), entryInput))
@@ -238,9 +261,10 @@ static mlir::LogicalResult validateDynamicEmpty(mlir::func::FuncOp entry,
   return mlir::success();
 }
 
-static mlir::LogicalResult validateDynamicExpandShape(mlir::func::FuncOp entry,
-                                                      mlir::Operation *op,
-                                                      mlir::Value entryInput) {
+static mlir::LogicalResult
+validateDynamicExpandShape(mlir::func::FuncOp entry, mlir::Operation *op,
+                           mlir::Value entryInput,
+                           SpecializationContract contract) {
   if (op->getName().getStringRef() != "tensor.expand_shape" ||
       op->getNumResults() != 1)
     return mlir::success();
@@ -250,8 +274,9 @@ static mlir::LogicalResult validateDynamicExpandShape(mlir::func::FuncOp entry,
   if (!resultType || resultType.hasStaticShape())
     return mlir::success();
 
-  auto expectedResultType = getF32TensorType(
-      entry.getContext(), {kBatch, mlir::ShapedType::kDynamic, kHidden});
+  auto expectedResultType =
+      getF32TensorType(entry.getContext(),
+                       {kBatch, mlir::ShapedType::kDynamic, contract.hidden});
   if (resultType != expectedResultType)
     return op->emitError()
            << "in @" << entry.getSymName()
@@ -268,7 +293,9 @@ static mlir::LogicalResult validateDynamicExpandShape(mlir::func::FuncOp entry,
   return mlir::success();
 }
 
-static mlir::LogicalResult validateStageAMlpBody(mlir::func::FuncOp entry) {
+static mlir::LogicalResult
+validateSpecializedBody(mlir::func::FuncOp entry,
+                        SpecializationContract contract) {
   mlir::Value entryInput = entry.getArgument(0);
 
   mlir::LogicalResult result = mlir::success();
@@ -276,16 +303,17 @@ static mlir::LogicalResult validateStageAMlpBody(mlir::func::FuncOp entry) {
     if (!hasDynamicTensorOperandOrResult(op))
       return mlir::WalkResult::advance();
 
-    if (!isAllowedStageADynamicTensorOp(op)) {
+    if (!isAllowedDynamicTensorOp(op)) {
       result = op->emitError() << "in @" << entry.getSymName()
                                << ", unsupported dynamic tensor operation "
                                << op->getName().getStringRef();
       return mlir::WalkResult::interrupt();
     }
 
-    if (mlir::failed(validateDynamicEmpty(entry, op, entryInput)) ||
-        mlir::failed(validateDynamicExpandShape(entry, op, entryInput)) ||
-        mlir::failed(validateDynamicTensorValueTypes(entry, op))) {
+    if (mlir::failed(validateDynamicEmpty(entry, op, entryInput, contract)) ||
+        mlir::failed(
+            validateDynamicExpandShape(entry, op, entryInput, contract)) ||
+        mlir::failed(validateDynamicTensorValueTypes(entry, op, contract))) {
       result = mlir::failure();
       return mlir::WalkResult::interrupt();
     }
@@ -299,6 +327,7 @@ static mlir::LogicalResult validateStageAMlpBody(mlir::func::FuncOp entry) {
 }
 
 static mlir::LogicalResult validateStageAMlpEntry(mlir::func::FuncOp entry) {
+  auto contract = getStageAContract();
   auto functionType = entry.getFunctionType();
   if (functionType.getNumInputs() != 5)
     return entry.emitError()
@@ -307,16 +336,19 @@ static mlir::LogicalResult validateStageAMlpEntry(mlir::func::FuncOp entry) {
   if (functionType.getNumResults() != 1)
     return entry.emitError() << "expected Stage A MLP entry to have 1 result";
 
-  if (mlir::failed(validateInput(entry, functionType.getInput(0))))
+  if (mlir::failed(
+          validateSequenceInput(entry, functionType.getInput(0), contract)))
     return mlir::failure();
 
   auto *context = entry.getContext();
-  auto w1Type = getF32TensorType(context, {kHidden, kIntermediate});
-  auto b1Type = getF32TensorType(context, {kIntermediate});
-  auto w2Type = getF32TensorType(context, {kIntermediate, kHidden});
-  auto b2Type = getF32TensorType(context, {kHidden});
-  auto resultType =
-      getF32TensorType(context, {kBatch, mlir::ShapedType::kDynamic, kHidden});
+  auto w1Type =
+      getF32TensorType(context, {contract.hidden, contract.intermediate});
+  auto b1Type = getF32TensorType(context, {contract.intermediate});
+  auto w2Type =
+      getF32TensorType(context, {contract.intermediate, contract.hidden});
+  auto b2Type = getF32TensorType(context, {contract.hidden});
+  auto resultType = getF32TensorType(
+      context, {kBatch, mlir::ShapedType::kDynamic, contract.hidden});
 
   if (mlir::failed(validateParameter(entry, 1, w1Type, "w1")))
     return mlir::failure();
@@ -331,38 +363,95 @@ static mlir::LogicalResult validateStageAMlpEntry(mlir::func::FuncOp entry) {
                            "result 0");
 }
 
-static mlir::FunctionType getStaticMlpType(mlir::MLIRContext *context,
-                                           int64_t sequenceLength) {
-  auto xType = getF32TensorType(context, {kBatch, sequenceLength, kHidden});
-  auto w1Type = getF32TensorType(context, {kHidden, kIntermediate});
-  auto b1Type = getF32TensorType(context, {kIntermediate});
-  auto w2Type = getF32TensorType(context, {kIntermediate, kHidden});
-  auto b2Type = getF32TensorType(context, {kHidden});
-  return mlir::FunctionType::get(
-      context, {xType, w1Type, b1Type, w2Type, b2Type}, {xType});
+static mlir::LogicalResult
+validateStageBTinyEncoderEntry(mlir::func::FuncOp entry) {
+  auto contract = getStageBContract();
+  auto functionType = entry.getFunctionType();
+  if (functionType.getNumInputs() != 11)
+    return entry.emitError()
+           << "expected Stage B tiny encoder entry to have 11 arguments";
+
+  if (functionType.getNumResults() != 1)
+    return entry.emitError()
+           << "expected Stage B tiny encoder entry to have 1 result";
+
+  if (mlir::failed(
+          validateSequenceInput(entry, functionType.getInput(0), contract)))
+    return mlir::failure();
+
+  auto *context = entry.getContext();
+  auto hiddenByHidden =
+      getF32TensorType(context, {contract.hidden, contract.hidden});
+  auto hiddenVector = getF32TensorType(context, {contract.hidden});
+  auto hiddenByIntermediate =
+      getF32TensorType(context, {contract.hidden, contract.intermediate});
+  auto intermediateVector = getF32TensorType(context, {contract.intermediate});
+  auto intermediateByHidden =
+      getF32TensorType(context, {contract.intermediate, contract.hidden});
+  auto resultType = getF32TensorType(
+      context, {kBatch, mlir::ShapedType::kDynamic, contract.hidden});
+
+  if (mlir::failed(validateParameter(entry, 1, hiddenByHidden, "q_w")))
+    return mlir::failure();
+  if (mlir::failed(validateParameter(entry, 2, hiddenByHidden, "k_w")))
+    return mlir::failure();
+  if (mlir::failed(validateParameter(entry, 3, hiddenByHidden, "v_w")))
+    return mlir::failure();
+  if (mlir::failed(validateParameter(entry, 4, hiddenByHidden, "o_w")))
+    return mlir::failure();
+  if (mlir::failed(validateParameter(entry, 5, hiddenVector, "norm_scale")))
+    return mlir::failure();
+  if (mlir::failed(validateParameter(entry, 6, hiddenVector, "norm_bias")))
+    return mlir::failure();
+  if (mlir::failed(validateParameter(entry, 7, hiddenByIntermediate, "ff_w1")))
+    return mlir::failure();
+  if (mlir::failed(validateParameter(entry, 8, intermediateVector, "ff_b1")))
+    return mlir::failure();
+  if (mlir::failed(validateParameter(entry, 9, intermediateByHidden, "ff_w2")))
+    return mlir::failure();
+  if (mlir::failed(validateParameter(entry, 10, hiddenVector, "ff_b2")))
+    return mlir::failure();
+
+  return validateExactType(entry, functionType.getResult(0), resultType,
+                           "result 0");
 }
 
-static mlir::Type refineStageATensorType(mlir::Type type,
-                                         int64_t sequenceLength) {
+static mlir::Type refineTensorType(mlir::Type type,
+                                   SpecializationContract contract,
+                                   int64_t sequenceLength) {
   auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
   if (!tensorType || !tensorType.getElementType().isF32())
     return type;
 
   auto shape = tensorType.getShape();
-  if (shape.equals({kBatch, mlir::ShapedType::kDynamic, kHidden}))
+  if (shape.equals({kBatch, mlir::ShapedType::kDynamic, contract.hidden}))
     return getF32TensorType(tensorType.getContext(),
-                            {kBatch, sequenceLength, kHidden});
-  if (shape.equals({mlir::ShapedType::kDynamic, kHidden}))
-    return getF32TensorType(tensorType.getContext(), {sequenceLength, kHidden});
-  if (shape.equals({mlir::ShapedType::kDynamic, kIntermediate}))
+                            {kBatch, sequenceLength, contract.hidden});
+  if (shape.equals({mlir::ShapedType::kDynamic, contract.hidden}))
     return getF32TensorType(tensorType.getContext(),
-                            {sequenceLength, kIntermediate});
+                            {sequenceLength, contract.hidden});
+  if (shape.equals({mlir::ShapedType::kDynamic, contract.intermediate}))
+    return getF32TensorType(tensorType.getContext(),
+                            {sequenceLength, contract.intermediate});
 
   return type;
 }
 
-static void refineValueType(mlir::Value value, int64_t sequenceLength) {
-  value.setType(refineStageATensorType(value.getType(), sequenceLength));
+static mlir::FunctionType getStaticFunctionType(mlir::func::FuncOp func,
+                                                SpecializationContract contract,
+                                                int64_t sequenceLength) {
+  llvm::SmallVector<mlir::Type> inputs;
+  llvm::SmallVector<mlir::Type> results;
+  for (mlir::Type input : func.getFunctionType().getInputs())
+    inputs.push_back(refineTensorType(input, contract, sequenceLength));
+  for (mlir::Type result : func.getFunctionType().getResults())
+    results.push_back(refineTensorType(result, contract, sequenceLength));
+  return mlir::FunctionType::get(func.getContext(), inputs, results);
+}
+
+static void refineValueType(mlir::Value value, SpecializationContract contract,
+                            int64_t sequenceLength) {
+  value.setType(refineTensorType(value.getType(), contract, sequenceLength));
 }
 
 static void dropStaticEmptySizes(mlir::Operation *op) {
@@ -393,14 +482,15 @@ static void refineExpandShape(mlir::Operation *op) {
       mlir::DenseI64ArrayAttr::get(op->getContext(), resultType.getShape()));
 }
 
-static void refineStageAClone(mlir::func::FuncOp clone,
-                              int64_t sequenceLength) {
-  clone.setType(getStaticMlpType(clone.getContext(), sequenceLength));
+static void refineClone(mlir::func::FuncOp clone,
+                        SpecializationContract contract,
+                        int64_t sequenceLength) {
+  clone.setType(getStaticFunctionType(clone, contract, sequenceLength));
   clone.getArgument(0).setType(clone.getFunctionType().getInput(0));
 
   clone.walk([&](mlir::Operation *op) {
     for (mlir::Value result : op->getResults())
-      refineValueType(result, sequenceLength);
+      refineValueType(result, contract, sequenceLength);
   });
 
   clone.walk([](mlir::Operation *op) {
@@ -502,7 +592,8 @@ static void emitDispatchWrapper(mlir::func::FuncOp genericFunc,
 
 static mlir::LogicalResult
 emitSpecializations(mlir::ModuleOp module, mlir::func::FuncOp entry,
-                    llvm::ArrayRef<int64_t> lengths) {
+                    llvm::ArrayRef<int64_t> lengths,
+                    SpecializationContract contract) {
   mlir::SymbolTable symbolTable(module);
   std::string originalName = entry.getSymName().str();
   std::string genericName = originalName + "_generic";
@@ -518,6 +609,7 @@ emitSpecializations(mlir::ModuleOp module, mlir::func::FuncOp entry,
 
   entry.setName(genericName);
   entry->removeAttr("shortseq.entry");
+  entry->removeAttr("shortseq.stage_b");
 
   mlir::OpBuilder builder(module.getBodyRegion());
   mlir::Operation *insertAfter = entry.getOperation();
@@ -528,7 +620,7 @@ emitSpecializations(mlir::ModuleOp module, mlir::func::FuncOp entry,
     auto staticFunc = entry.clone(mapper);
     staticFunc.setName(originalName + "_s" + std::to_string(length));
     staticFunc.setPrivate();
-    refineStageAClone(staticFunc, length);
+    refineClone(staticFunc, contract, length);
 
     builder.insert(staticFunc);
     staticFuncs.push_back(staticFunc);
@@ -561,7 +653,7 @@ public:
   llvm::StringRef getArgument() const final { return "shortseq-specialize"; }
 
   llvm::StringRef getDescription() const final {
-    return "Validates the Stage A short-sequence MLP specialization contract";
+    return "Specializes supported short-sequence inference entry points";
   }
 
   ListOption<int64_t> lengths{
@@ -592,18 +684,24 @@ public:
       return;
     }
 
-    if (mlir::failed(validateStageAMlpEntry(entries.front()))) {
+    mlir::func::FuncOp entry = entries.front();
+    bool isStageB = entry->hasAttr("shortseq.stage_b");
+    SpecializationContract contract =
+        isStageB ? getStageBContract() : getStageAContract();
+
+    if (isStageB ? mlir::failed(validateStageBTinyEncoderEntry(entry))
+                 : mlir::failed(validateStageAMlpEntry(entry))) {
       signalPassFailure();
       return;
     }
 
-    if (mlir::failed(validateStageAMlpBody(entries.front()))) {
+    if (mlir::failed(validateSpecializedBody(entry, contract))) {
       signalPassFailure();
       return;
     }
 
     if (mlir::failed(
-            emitSpecializations(module, entries.front(), parsedLengths))) {
+            emitSpecializations(module, entry, parsedLengths, contract))) {
       signalPassFailure();
       return;
     }

@@ -84,7 +84,16 @@ add_custom_target(check-shortseq
           --input examples/mlp/dynamic_mlp.mlir
           --lengths 4,8,16
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen python scripts/check_parameter_accounting.py
+          --mlir-opt "${SHORTSEQ_MLIR_OPT}"
+          --plugin "${SHORTSEQ_PLUGIN}"
+          --input examples/stage_b/tiny_gemma_encoder.mlir
+          --entry encoder
+          --lengths 4,8,16
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group bench python test/mlp/mlp_numerical.py
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group bench python test/stage_b/tiny_gemma_numerical.py
   DEPENDS ShortSeqPasses
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Stage A parameter-sharing invariants in transformed IR."""
+"""Check parameter-sharing invariants in transformed IR."""
 
 from __future__ import annotations
 
@@ -10,11 +10,8 @@ import sys
 from pathlib import Path
 
 
-CALL_RE = re.compile(
-    r"func\.call @(?P<callee>mlp_s\d+|mlp_generic)\((?P<args>[^)]*)\)"
-)
 ARG_RE = re.compile(r"(%[\w$._-]+)\s*:")
-WRAPPER_RE = re.compile(r"func\.func @mlp\((?P<args>[^)]*)\)")
+PARAM_START = 1
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,6 +22,7 @@ def parse_args() -> argparse.Namespace:
         "--input", default=Path("examples/mlp/dynamic_mlp.mlir"), type=Path
     )
     parser.add_argument("--lengths", default="16")
+    parser.add_argument("--entry", default="mlp")
     return parser.parse_args()
 
 
@@ -57,14 +55,15 @@ def run_pass(args: argparse.Namespace) -> str:
     return completed.stdout
 
 
-def parse_wrapper(ir: str) -> tuple[list[str], str]:
-    match = WRAPPER_RE.search(ir)
+def parse_wrapper(ir: str, entry: str) -> tuple[list[str], str]:
+    wrapper_re = re.compile(rf"func\.func @{re.escape(entry)}\((?P<args>[^)]*)\)")
+    match = wrapper_re.search(ir)
     if match is None:
-        raise AssertionError("missing generated wrapper @mlp")
+        raise AssertionError(f"missing generated wrapper @{entry}")
 
     body_start = ir.find("{", match.end())
     if body_start == -1:
-        raise AssertionError("could not find @mlp wrapper body")
+        raise AssertionError(f"could not find @{entry} wrapper body")
 
     depth = 0
     for offset, char in enumerate(ir[body_start:], start=body_start):
@@ -76,17 +75,21 @@ def parse_wrapper(ir: str) -> tuple[list[str], str]:
                 wrapper = ir[match.start() : offset + 1]
                 break
     else:
-        raise AssertionError("unterminated @mlp wrapper body")
+        raise AssertionError(f"unterminated @{entry} wrapper body")
 
     args = ARG_RE.findall(match.group("args"))
-    if len(args) != 5:
-        raise AssertionError(f"expected @mlp to have 5 block arguments, got {args}")
+    if not args:
+        raise AssertionError(f"expected @{entry} to have block arguments")
     return args, wrapper
 
 
-def parse_call_args(wrapper: str) -> dict[str, list[str]]:
+def parse_call_args(wrapper: str, entry: str) -> dict[str, list[str]]:
+    call_re = re.compile(
+        rf"func\.call @(?P<callee>{re.escape(entry)}_s\d+|"
+        rf"{re.escape(entry)}_generic)\((?P<args>[^)]*)\)"
+    )
     calls: dict[str, list[str]] = {}
-    for match in CALL_RE.finditer(wrapper):
+    for match in call_re.finditer(wrapper):
         callee = match.group("callee")
         operands = [operand.strip() for operand in match.group("args").split(",")]
         calls[callee] = operands
@@ -98,28 +101,29 @@ def check_no_dense_payloads(ir: str) -> None:
         raise AssertionError("transformed IR contains an embedded dense<...> payload")
 
 
-def check_parameter_forwarding(ir: str, lengths: list[int]) -> None:
-    wrapper_args, wrapper = parse_wrapper(ir)
-    parameter_args = wrapper_args[1:5]
-    calls = parse_call_args(wrapper)
+def check_parameter_forwarding(ir: str, entry: str, lengths: list[int]) -> None:
+    wrapper_args, wrapper = parse_wrapper(ir, entry)
+    parameter_args = wrapper_args[PARAM_START:]
+    calls = parse_call_args(wrapper, entry)
 
     for length in lengths:
-        callee = f"mlp_s{length}"
+        callee = f"{entry}_s{length}"
         static_operands = calls.get(callee)
         if static_operands is None:
-            raise AssertionError(f"@mlp does not call @{callee}")
-        if static_operands[1:5] != parameter_args:
+            raise AssertionError(f"@{entry} does not call @{callee}")
+        if static_operands[PARAM_START:] != parameter_args:
             raise AssertionError(
                 f"@{callee} call does not forward wrapper parameter operands "
-                f"unchanged: got {static_operands[1:5]}, expected {parameter_args}"
+                f"unchanged: got {static_operands[PARAM_START:]}, "
+                f"expected {parameter_args}"
             )
 
-    generic_operands = calls.get("mlp_generic")
+    generic_operands = calls.get(f"{entry}_generic")
     if generic_operands is None:
-        raise AssertionError("@mlp does not call @mlp_generic")
+        raise AssertionError(f"@{entry} does not call @{entry}_generic")
     if generic_operands != wrapper_args:
         raise AssertionError(
-            "@mlp_generic call does not forward wrapper operands unchanged: "
+            f"@{entry}_generic call does not forward wrapper operands unchanged: "
             f"got {generic_operands}, expected {wrapper_args}"
         )
 
@@ -130,11 +134,11 @@ def main() -> int:
     ir = run_pass(args)
 
     check_no_dense_payloads(ir)
-    check_parameter_forwarding(ir, lengths)
+    check_parameter_forwarding(ir, args.entry, lengths)
 
     print(
         "PASS parameter accounting: no generated dense payloads; "
-        "@mlp forwards parameter operands to static variants and @mlp_generic"
+        f"@{args.entry} forwards parameter operands to static variants and fallback"
     )
     return 0
 
