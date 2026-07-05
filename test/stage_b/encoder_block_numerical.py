@@ -25,7 +25,9 @@ ATOL = 2e-5
 Params = tuple[np.ndarray, ...]
 
 
-def normal(rng: np.random.Generator, shape: tuple[int, ...], scale: float) -> np.ndarray:
+def normal(
+    rng: np.random.Generator, shape: tuple[int, ...], scale: float
+) -> np.ndarray:
     return rng.normal(0.0, scale, shape).astype(np.float32)
 
 

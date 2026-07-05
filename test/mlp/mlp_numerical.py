@@ -23,7 +23,9 @@ RTOL = 2e-5
 ATOL = 2e-5
 
 
-def normal(rng: np.random.Generator, shape: tuple[int, ...], scale: float) -> np.ndarray:
+def normal(
+    rng: np.random.Generator, shape: tuple[int, ...], scale: float
+) -> np.ndarray:
     return rng.normal(0.0, scale, shape).astype(np.float32)
 
 
@@ -73,8 +75,7 @@ def mlp_static(
 ) -> np.ndarray:
     if x.shape[1] != sequence_length:
         raise AssertionError(
-            f"@mlp_s{sequence_length} got S={x.shape[1]}, "
-            f"expected S={sequence_length}"
+            f"@mlp_s{sequence_length} got S={x.shape[1]}, expected S={sequence_length}"
         )
     return mlp_body(x, parameters)
 

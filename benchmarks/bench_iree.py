@@ -41,8 +41,12 @@ class Variant:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--lengths", default="16", help="Comma-separated sequence lengths")
-    parser.add_argument("--mlir-opt", default=REPO_ROOT / "build/llvm/bin/mlir-opt", type=Path)
+    parser.add_argument(
+        "--lengths", default="16", help="Comma-separated sequence lengths"
+    )
+    parser.add_argument(
+        "--mlir-opt", default=REPO_ROOT / "build/llvm/bin/mlir-opt", type=Path
+    )
     parser.add_argument(
         "--plugin",
         default=REPO_ROOT / "build/shortseq-pinned/lib/ShortSeqPasses.so",
@@ -131,7 +135,11 @@ def variants_for(args: argparse.Namespace, sequence_length: int) -> tuple[Varian
     dynamic = (REPO_ROOT / "examples/mlp/dynamic_mlp.mlir").read_text()
     variants = [
         Variant("dynamic_generic", "mlp", dynamic),
-        Variant("static_oracle", f"mlp_s{sequence_length}", static_oracle_source(sequence_length)),
+        Variant(
+            "static_oracle",
+            f"mlp_s{sequence_length}",
+            static_oracle_source(sequence_length),
+        ),
     ]
     if sequence_length == 16:
         variants.append(Variant("dispatched_wrapper", "mlp", specialize_s16(args)))
@@ -173,7 +181,9 @@ def select_affinity_cpu(args: argparse.Namespace) -> int | None:
     cpu = min(cpus) if args.cpu is None else args.cpu
     if cpu not in cpus:
         available = ", ".join(str(value) for value in sorted(cpus))
-        raise RuntimeError(f"CPU {cpu} is outside the current affinity set: {available}")
+        raise RuntimeError(
+            f"CPU {cpu} is outside the current affinity set: {available}"
+        )
     return cpu
 
 
@@ -258,7 +268,9 @@ def main() -> int:
                 vmfb_path = prefix.with_suffix(".vmfb")
                 compile_s = compile_iree(args, variant.source, vmfb_path)
                 samples = [
-                    benchmark_ms(args, vmfb_path, variant.entry, sequence_length, affinity_cpu)
+                    benchmark_ms(
+                        args, vmfb_path, variant.entry, sequence_length, affinity_cpu
+                    )
                     for _ in range(args.repeats)
                 ]
                 print(

@@ -63,7 +63,9 @@ def parse_args() -> argparse.Namespace:
         type=Path,
     )
     parser.add_argument("--lengths", default="4,8")
-    parser.add_argument("--mlir-opt", default=REPO_ROOT / "build/llvm/bin/mlir-opt", type=Path)
+    parser.add_argument(
+        "--mlir-opt", default=REPO_ROOT / "build/llvm/bin/mlir-opt", type=Path
+    )
     parser.add_argument(
         "--plugin",
         default=REPO_ROOT / "build/shortseq-pinned/lib/ShortSeqPasses.so",
@@ -106,7 +108,9 @@ def check_args(args: argparse.Namespace) -> None:
         if not path.exists():
             raise FileNotFoundError(path)
     if args.warmup < 0 or args.iterations <= 0 or args.repeats <= 0:
-        raise ValueError("--warmup must be >= 0; --iterations and --repeats must be > 0")
+        raise ValueError(
+            "--warmup must be >= 0; --iterations and --repeats must be > 0"
+        )
 
 
 def run_command(command: list[str]) -> str:
@@ -125,7 +129,11 @@ def run_command(command: list[str]) -> str:
 
 
 def stage_b_sources(args: argparse.Namespace, lengths: list[int]) -> dict[str, str]:
-    pipeline = "builtin.module(shortseq-specialize{lengths=" + ",".join(map(str, lengths)) + "})"
+    pipeline = (
+        "builtin.module(shortseq-specialize{lengths="
+        + ",".join(map(str, lengths))
+        + "})"
+    )
     wrapper = run_command(
         [
             str(args.mlir_opt),
@@ -185,7 +193,9 @@ def set_affinity(args: argparse.Namespace) -> int | None:
     cpu = min(allowed) if args.cpu is None else args.cpu
     if cpu not in allowed:
         available = ",".join(str(value) for value in sorted(allowed))
-        raise RuntimeError(f"CPU {cpu} is outside the current affinity set: {available}")
+        raise RuntimeError(
+            f"CPU {cpu} is outside the current affinity set: {available}"
+        )
     os.sched_setaffinity(0, {cpu})
     return cpu
 
@@ -247,11 +257,7 @@ def print_compile_summary(dynamic: CompiledModule, wrapper: CompiledModule) -> N
     print("compiled modules:")
     print("variant              compile_s  vmfb_bytes")
     for variant in (dynamic, wrapper):
-        print(
-            f"{variant.name:<20}"
-            f"{variant.compile_s:>9.3f}"
-            f"{variant.vmfb_bytes:>12}"
-        )
+        print(f"{variant.name:<20}{variant.compile_s:>9.3f}{variant.vmfb_bytes:>12}")
     print()
 
 
@@ -305,7 +311,9 @@ def main() -> int:
     with dump_context(args.dump_dir) as tmp:
         dump_dir = Path(tmp)
         sources = stage_b_sources(args, lengths)
-        dynamic = compile_source("dynamic_generic", sources["dynamic_generic"], dump_dir)
+        dynamic = compile_source(
+            "dynamic_generic", sources["dynamic_generic"], dump_dir
+        )
         wrapper = compile_source(
             "dispatched_wrapper", sources["dispatched_wrapper"], dump_dir
         )

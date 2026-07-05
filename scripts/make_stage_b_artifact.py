@@ -62,9 +62,7 @@ def main() -> int:
     }
     arrays.update(
         {
-            f"x_s{length}": rng.normal(0.0, 0.1, (1, length, HIDDEN)).astype(
-                np.float32
-            )
+            f"x_s{length}": rng.normal(0.0, 0.1, (1, length, HIDDEN)).astype(np.float32)
             for length in lengths
         }
     )

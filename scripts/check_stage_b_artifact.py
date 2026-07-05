@@ -59,7 +59,9 @@ def check_array(data: np.lib.npyio.NpzFile, name: str, shape: tuple[int, ...]) -
 def main() -> int:
     args = parse_args()
     with np.load(args.input) as data:
-        param_bytes = sum(check_array(data, name, shape) for name, shape in PARAMS.items())
+        param_bytes = sum(
+            check_array(data, name, shape) for name, shape in PARAMS.items()
+        )
         sample_keys = sorted(
             (key for key in data.files if re.fullmatch(r"x_s[1-9][0-9]*", key)),
             key=lambda name: int(name[3:]),

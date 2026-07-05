@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: Python checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ruff format
+        run: uv run --frozen --group dev ruff format --check benchmarks scripts test
+
+      - name: Ruff lint
+        run: uv run --frozen --group dev ruff check benchmarks scripts test
+
+      - name: Python compile
+        run: uv run --frozen --group numerical python -m py_compile $(git ls-files '*.py')
+
+  plugin:
+    name: Plugin build and lit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache zlib1g-dev libzstd-dev
+
+      - name: Cache pinned LLVM build
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/llvm-project
+            build/llvm
+          key: llvm-${{ runner.os }}-${{ hashFiles('toolchain/llvm-project.commit') }}
+
+      - name: Fetch pinned LLVM
+        run: |
+          if [ ! -d third_party/llvm-project/.git ]; then
+            mkdir -p third_party
+            git clone --filter=blob:none https://github.com/llvm/llvm-project.git third_party/llvm-project
+          fi
+          git -C third_party/llvm-project fetch --filter=blob:none origin "$(cat toolchain/llvm-project.commit)"
+          git -C third_party/llvm-project checkout "$(cat toolchain/llvm-project.commit)"
+
+      - name: Build pinned MLIR tools
+        run: |
+          cmake -G Ninja \
+            -S third_party/llvm-project/llvm \
+            -B build/llvm \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_PROJECTS=mlir \
+            -DLLVM_TARGETS_TO_BUILD=host \
+            -DLLVM_ENABLE_ASSERTIONS=ON \
+            -DLLVM_ENABLE_RTTI=ON \
+            -DLLVM_BUILD_TOOLS=ON \
+            -DLLVM_INCLUDE_TESTS=ON \
+            -DLLVM_ENABLE_BINDINGS=OFF \
+            -DCMAKE_C_COMPILER=cc \
+            -DCMAKE_CXX_COMPILER=c++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build/llvm --target mlir-opt FileCheck not count
+
+      - name: Build plugin and run tests
+        run: |
+          cmake -G Ninja \
+            -S . \
+            -B build/shortseq-ci \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DLLVM_DIR="$PWD/build/llvm/lib/cmake/llvm" \
+            -DMLIR_DIR="$PWD/build/llvm/lib/cmake/mlir"
+          cmake --build build/shortseq-ci --target check-shortseq
