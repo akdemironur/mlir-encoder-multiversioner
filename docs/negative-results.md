@@ -36,6 +36,17 @@ Lowered IR inspection:
 This only describes the current bufferization plus scalar loop runner path. It
 does not rule out backend benefits from static shapes.
 
+## 2026-07-05: Stage B IREE Binding Optimization
+
+Pinned IREE `20241104.1068` mis-handles the multi-length Stage B wrapper when
+`--iree-scheduling-optimize-bindings` is left enabled. The `4,8` wrapper fails
+on `S=4` with a HAL constant-count mismatch. The benchmark disables that
+optimization for both variants:
+
+```text
+--iree-scheduling-optimize-bindings=false
+```
+
 ## 2026-07-04: IREE CPU Backend Snapshot
 
 Command:

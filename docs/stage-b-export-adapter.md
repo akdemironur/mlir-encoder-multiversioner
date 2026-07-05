@@ -42,7 +42,7 @@ inputs:
 ```sh
 uv run --frozen --group numerical python scripts/make_stage_b_artifact.py \
   --output results/stage_b/encoder_block_synthetic.npz \
-  --lengths 4,8,16
+  --lengths 4,8,16,32,64,128
 uv run --frozen --group numerical python scripts/check_stage_b_artifact.py \
   --input results/stage_b/encoder_block_synthetic.npz
 ```
@@ -50,3 +50,39 @@ uv run --frozen --group numerical python scripts/check_stage_b_artifact.py \
 `results/` is ignored. The file contains the ten parameter arrays, `x_sN`
 sample inputs, and no length-specific parameter copies. It is benchmark
 plumbing, not an exported model.
+
+## IREE Benchmark
+
+Run the artifact-backed Stage B benchmark:
+
+```sh
+uv run --frozen --group bench python benchmarks/bench_stage_b_iree.py \
+  --artifact results/stage_b/encoder_block_synthetic.npz \
+  --lengths 4,8,16,32,64,128
+```
+
+The benchmark compiles two IREE modules once: `dynamic_generic` and one
+`dispatched_wrapper` containing all requested exact-length branches. It reports
+artifact parameter bytes separately from VMFB bytes and checks wrapper output
+against the dynamic generic output before timing.
+
+Current snapshot, pinned to CPU 0:
+
+```text
+compiled modules:
+variant              compile_s  vmfb_bytes
+dynamic_generic         0.971       29764
+dispatched_wrapper      3.396      102388
+
+latency_ms:
+S      dyn_med  wrap_med  speedup
+4     0.060206  0.050735    1.187x
+8     0.058857  0.053783    1.094x
+16    0.075067  0.063446    1.183x
+32    0.103553  0.082433    1.256x
+64    0.161079  0.119304    1.350x
+128   0.291003  0.204452    1.423x
+```
+
+Pinned IREE `20241104.1068` needs
+`--iree-scheduling-optimize-bindings=false` for this wrapper shape.
