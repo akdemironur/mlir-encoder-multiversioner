@@ -185,7 +185,7 @@ To run the smoke test manually:
 build/llvm/bin/mlir-opt \
   --load-pass-plugin=build/shortseq-pinned/lib/ShortSeqPasses.so \
   --pass-pipeline='builtin.module(shortseq-specialize)' \
-  test/mlp/pass-invocation.mlir
+  test/mlp/routing.mlir
 ```
 
 To emit several static variants and a dynamic fallback wrapper:
@@ -200,6 +200,7 @@ build/llvm/bin/mlir-opt \
 There is also an experimental Stage B tiny encoder fixture. It uses
 pre-embedded `tensor<1x?x64xf32>` input with synthetic parameter operands; token
 ids, embedding lookup, masks, and real model artifacts are still out of scope.
+The exact contract is documented in [stage-b-contract.md](docs/stage-b-contract.md).
 The adapter boundary example keeps that split explicit: unmarked adapter code
 produces pre-embedded f32 activations, and only `@encoder` is specialized.
 
@@ -213,4 +214,9 @@ build/llvm/bin/mlir-opt \
   --load-pass-plugin=build/shortseq-pinned/lib/ShortSeqPasses.so \
   --pass-pipeline='builtin.module(shortseq-specialize{lengths=4,8})' \
   examples/stage_b/preembed_adapter_boundary.mlir
+
+build/llvm/bin/mlir-opt \
+  --load-pass-plugin=build/shortseq-pinned/lib/ShortSeqPasses.so \
+  --pass-pipeline='builtin.module(shortseq-specialize{lengths=4,8})' \
+  examples/stage_b/contract_encoder_block.mlir
 ```

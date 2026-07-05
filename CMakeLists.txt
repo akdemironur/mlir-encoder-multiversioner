@@ -91,6 +91,13 @@ add_custom_target(check-shortseq
           --entry encoder
           --lengths 4,8,16
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen python scripts/check_parameter_accounting.py
+          --mlir-opt "${SHORTSEQ_MLIR_OPT}"
+          --plugin "${SHORTSEQ_PLUGIN}"
+          --input examples/stage_b/preembed_adapter_boundary.mlir
+          --entry encoder
+          --lengths 4,8
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group bench python test/mlp/mlp_numerical.py
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group bench python test/stage_b/tiny_gemma_numerical.py
