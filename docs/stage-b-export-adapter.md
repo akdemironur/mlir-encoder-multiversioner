@@ -43,7 +43,10 @@ inputs:
 uv run --frozen --group numerical python scripts/make_stage_b_artifact.py \
   --output results/stage_b/encoder_block_synthetic.npz \
   --lengths 4,8,16
+uv run --frozen --group numerical python scripts/check_stage_b_artifact.py \
+  --input results/stage_b/encoder_block_synthetic.npz
 ```
 
 `results/` is ignored. The file contains the ten parameter arrays, `x_sN`
-sample inputs, and metadata. It is benchmark plumbing, not an exported model.
+sample inputs, and no length-specific parameter copies. It is benchmark
+plumbing, not an exported model.
