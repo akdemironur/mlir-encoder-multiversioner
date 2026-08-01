@@ -1,5 +1,21 @@
 # Negative Results
 
+## 2026-08-01: static position slices cannot exceed 512 tokens
+
+The imported encoder retains ONNX's clamped slice of the fixed
+`tensor<1x512xi64>` position-id initializer. During the E5 shape audit, an
+experimental `S=513` specialization correctly failed MLIR verification after
+the slice became static:
+
+```text
+error: slice along dimension 1 runs out-of-bounds: 512 >= 512
+```
+
+The supported exact lengths are already `16,32,64,128`. The pass now rejects
+any E5 exact length above 512 before cloning, and the fixture validator rejects
+widths outside `[1,512]`. The pass does not clamp or rewrite token tensors; the
+generic graph remains unchanged.
+
 ## 2026-08-01: legacy IREE package does not reach E5's core boundary
 
 The official f32 `intfloat/e5-small-v2` `model.onnx` at revision

@@ -37,8 +37,10 @@ all three tensors consistently. Callers also add the E5 `query: ` or
 
 The runtime/test wrapper rejects masks containing values other than zero or
 one, all-zero masks, token IDs outside `[0, 30522)`, and token types outside
-`[0, 2)`. It reports invalid input and does not modify it. The compiled graph
-does not silently repair invalid input.
+`[0, 2)`. It also requires `1 <= S <= 512`, the model's position-embedding
+range. Exact E5 specialization lengths above 512 are rejected by the pass. The
+wrapper reports invalid input and does not modify it. The compiled graph does
+not silently repair invalid input.
 
 ## Adapter and output
 
@@ -102,6 +104,11 @@ supporting IR, generated-code, or counter evidence. CUDA is a later milestone.
 
 Model-dependent work belongs to `check-e5` and requires `fetch-e5` first.
 `check-shortseq` remains network-independent.
+
+The manually reviewed operation counts and the 20 allowed dynamic tensor
+families are recorded in [e5-core-inventory.md](e5-core-inventory.md).
+`check-e5` regenerates that inventory, transforms the full textual core,
+verifies the result with upstream `mlir-opt`, and compiles the dispatched VMFB.
 
 ## Contract-expansion checklist
 

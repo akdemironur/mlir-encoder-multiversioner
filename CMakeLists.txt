@@ -57,6 +57,7 @@ set(SHORTSEQ_PLUGIN "${CMAKE_BINARY_DIR}/lib/ShortSeqPasses${CMAKE_SHARED_MODULE
 set(SHORTSEQ_MLIR_OPT "${LLVM_TOOLS_BINARY_DIR}/mlir-opt")
 set(SHORTSEQ_FILECHECK "${LLVM_TOOLS_BINARY_DIR}/FileCheck")
 set(SHORTSEQ_NOT "${LLVM_TOOLS_BINARY_DIR}/not")
+set(E5_RESULT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/results/e5-small-v2")
 
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/test/lit.site.cfg.py.in"
@@ -143,12 +144,39 @@ add_custom_target(check-e5
           "${SHORTSEQ_UV}" run --frozen --group e5 python scripts/build_e5_bridge.py
           --mlir-opt "${SHORTSEQ_MLIR_OPT}"
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen python scripts/inventory_e5_core.py
+          --check docs/e5-core-inventory.md
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group e5 python scripts/check_e5_bridge.py
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group e5 python test/e5/bridge_checker.py
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group e5 python test/e5/iree_dynamic_numerical.py
-  DEPENDS fetch-e5
+  COMMAND "${SHORTSEQ_MLIR_OPT}"
+          --allow-unregistered-dialect
+          "--load-pass-plugin=${SHORTSEQ_PLUGIN}"
+          "--pass-pipeline=builtin.module(shortseq-specialize{lengths=16,32,64,128})"
+          "${E5_RESULT_DIR}/sentence_embedding.core.mlir"
+          -o "${E5_RESULT_DIR}/sentence_embedding.multiversioned.mlir"
+  COMMAND "${SHORTSEQ_MLIR_OPT}"
+          --allow-unregistered-dialect
+          "${E5_RESULT_DIR}/sentence_embedding.multiversioned.mlir"
+          -o /dev/null
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 python scripts/check_e5_bridge.py
+          --core "${E5_RESULT_DIR}/sentence_embedding.multiversioned.mlir"
+          --specialized-lengths 16,32,64,128
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 iree-compile
+          "${E5_RESULT_DIR}/sentence_embedding.multiversioned.mlir"
+          --iree-input-type=none
+          --iree-hal-target-device=local
+          --iree-hal-local-target-device-backends=llvm-cpu
+          --iree-llvmcpu-target-cpu=host
+          --iree-scheduling-optimize-bindings=false
+          -o "${E5_RESULT_DIR}/sentence_embedding.multiversioned.vmfb"
+  DEPENDS fetch-e5 ShortSeqPasses
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
+  VERBATIM
 )

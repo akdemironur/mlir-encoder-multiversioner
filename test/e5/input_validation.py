@@ -37,6 +37,8 @@ def main() -> int:
     rejected(ids, np.full_like(mask, 2), types)
     rejected(ids[:, :-1], mask, types)
     rejected(ids.astype(np.int32), mask, types)
+    long_ids = np.arange(513, dtype=np.int64)[None, :] % 30522
+    rejected(long_ids, np.ones_like(long_ids), np.zeros_like(long_ids))
     invalid_ids = ids.copy()
     invalid_ids[0, 0] = 30522
     rejected(invalid_ids, mask, types)

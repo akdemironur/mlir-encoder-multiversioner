@@ -356,7 +356,8 @@ entry accepts batch-1 dynamic-width `input_ids`, `attention_mask`, and
 `tensor<1x384xf32>` embedding. Exact lengths are `16,32,64,128`; all three
 widths must equal the selected length. Otherwise-valid width tuples use the
 generic fallback, while invalid fixtures are rejected by the caller-side
-wrapper. The pass never performs caller-side padding or tokenization.
+wrapper. Valid widths are `1..512`, matching the position-embedding table. The
+pass never performs caller-side padding or tokenization.
 
 The full ABI, input validation, parameter sharing, accounting boundaries, and
 benchmark checklist are in

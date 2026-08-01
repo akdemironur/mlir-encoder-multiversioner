@@ -8,6 +8,7 @@ import numpy as np
 
 VOCAB_SIZE = 30522
 TYPE_VOCAB_SIZE = 2
+MAX_SEQUENCE_LENGTH = 512
 
 
 def validate_inputs(
@@ -28,6 +29,9 @@ def validate_inputs(
     widths = {value.shape[1] for value in values.values()}
     if len(widths) != 1:
         raise ValueError("all three token inputs must have equal widths")
+    width = next(iter(widths))
+    if width == 0 or width > MAX_SEQUENCE_LENGTH:
+        raise ValueError("sequence width must be in [1,512]")
     if not np.all((attention_mask == 0) | (attention_mask == 1)):
         raise ValueError("attention_mask must contain only 0/1")
     if not np.any(attention_mask == 1):

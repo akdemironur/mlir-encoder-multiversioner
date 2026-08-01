@@ -31,6 +31,10 @@ static constexpr int64_t kStageAIntermediate = 1536;
 static constexpr int64_t kStageBHidden = 64;
 static constexpr int64_t kStageBIntermediate = 256;
 static constexpr int64_t kE5Hidden = 384;
+static constexpr int64_t kE5Intermediate = 1536;
+static constexpr int64_t kE5Heads = 12;
+static constexpr int64_t kE5HeadSize = 32;
+static constexpr int64_t kE5MaxSequenceLength = 512;
 static constexpr int64_t kDefaultLength = 16;
 static constexpr unsigned kSequenceAxis = 1;
 static constexpr unsigned kActivationSequenceArguments[] = {0};
@@ -57,8 +61,8 @@ static SpecializationContract getStageBContract() {
 }
 
 static SpecializationContract getE5Contract() {
-  return {ContractKind::E5, "E5-small-v2", kE5Hidden,
-          /*intermediate=*/0, kE5SequenceArguments};
+  return {ContractKind::E5, "E5-small-v2", kE5Hidden, kE5Intermediate,
+          kE5SequenceArguments};
 }
 
 static mlir::LogicalResult
@@ -189,12 +193,52 @@ static bool isDynamicRankedTensor(mlir::Type type) {
   return tensorType && !tensorType.hasStaticShape();
 }
 
+static bool isE5DynamicTensorType(mlir::Type type) {
+  auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
+  if (!tensorType || tensorType.hasStaticShape())
+    return false;
+
+  auto shape = tensorType.getShape();
+  auto elementType = tensorType.getElementType();
+  if (elementType.isInteger(64))
+    return shape.equals({kBatch, mlir::ShapedType::kDynamic}) ||
+           shape.equals({kBatch, 1, 1, mlir::ShapedType::kDynamic}) ||
+           shape.equals({kBatch, kE5Heads, mlir::ShapedType::kDynamic}) ||
+           shape.equals({mlir::ShapedType::kDynamic});
+  if (elementType.isInteger(1))
+    return shape.equals({kBatch, mlir::ShapedType::kDynamic});
+  if (!elementType.isF32())
+    return false;
+
+  return shape.equals({kE5Heads, kE5HeadSize,
+                       mlir::ShapedType::kDynamic}) ||
+         shape.equals({kE5Heads, mlir::ShapedType::kDynamic, kE5HeadSize}) ||
+         shape.equals({kE5Heads, mlir::ShapedType::kDynamic,
+                       mlir::ShapedType::kDynamic}) ||
+         shape.equals({kBatch, kE5Heads, kE5HeadSize,
+                       mlir::ShapedType::kDynamic}) ||
+         shape.equals(
+             {kBatch, kE5Heads, mlir::ShapedType::kDynamic, 1}) ||
+         shape.equals({kBatch, kE5Heads, mlir::ShapedType::kDynamic,
+                       kE5HeadSize}) ||
+         shape.equals({kBatch, kE5Heads, mlir::ShapedType::kDynamic,
+                       mlir::ShapedType::kDynamic}) ||
+         shape.equals({kBatch, kE5Heads, mlir::ShapedType::kDynamic}) ||
+         shape.equals({kBatch, 1, 1, mlir::ShapedType::kDynamic}) ||
+         shape.equals({kBatch, mlir::ShapedType::kDynamic, kE5Heads,
+                       kE5HeadSize}) ||
+         shape.equals(
+             {kBatch, mlir::ShapedType::kDynamic, kE5Intermediate}) ||
+         shape.equals({kBatch, mlir::ShapedType::kDynamic, 1}) ||
+         shape.equals({kBatch, mlir::ShapedType::kDynamic, kE5Hidden}) ||
+         shape.equals({kBatch, mlir::ShapedType::kDynamic}) ||
+         shape.equals({mlir::ShapedType::kDynamic, kE5Hidden});
+}
+
 static bool isContractDynamicTensorType(mlir::Type type,
                                         SpecializationContract contract) {
-  // Step 5 admits only the E5 ABI and routing shell. Step 6 separately audits
-  // and enables dynamic tensor families from the imported encoder body.
   if (contract.kind == ContractKind::E5)
-    return false;
+    return isE5DynamicTensorType(type);
 
   auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
   if (!tensorType || !tensorType.getElementType().isF32() ||
@@ -252,8 +296,17 @@ static bool hasDynamicTensorOperandOrResult(mlir::Operation *op) {
   return false;
 }
 
-static bool isAllowedDynamicTensorOp(mlir::Operation *op) {
+static bool isAllowedDynamicTensorOp(mlir::Operation *op,
+                                     SpecializationContract contract) {
   llvm::StringRef name = op->getName().getStringRef();
+  if (contract.kind == ContractKind::E5)
+    return name == "tensor.dim" || name == "tensor.empty" ||
+           name == "tensor.expand_shape" ||
+           name == "tensor.collapse_shape" ||
+           name == "tensor.extract_slice" || name == "linalg.fill" ||
+           name == "linalg.generic" || name == "linalg.batch_matmul" ||
+           name == "linalg.transpose";
+
   return name == "func.return" || name == "tensor.dim" ||
          name == "tensor.empty" || name == "tensor.collapse_shape" ||
          name == "linalg.fill" || name == "linalg.matmul" ||
@@ -343,9 +396,307 @@ validateDynamicExpandShape(mlir::func::FuncOp entry, mlir::Operation *op,
   return mlir::success();
 }
 
+static bool containsValue(llvm::ArrayRef<mlir::Value> values,
+                          mlir::Value value) {
+  return std::find(values.begin(), values.end(), value) != values.end();
+}
+
+static bool isE5EntrySequenceDim(mlir::Operation *op,
+                                 mlir::func::FuncOp entry,
+                                 SpecializationContract contract) {
+  if (!op || op->getName().getStringRef() != "tensor.dim" ||
+      op->getNumOperands() != 2 || op->getNumResults() != 1 ||
+      !isIndexConstant(op->getOperand(1), kSequenceAxis))
+    return false;
+
+  for (unsigned argument : contract.sequenceArguments) {
+    if (op->getOperand(0) == entry.getArgument(argument))
+      return true;
+  }
+  return false;
+}
+
+static llvm::SmallVector<mlir::Value>
+collectE5SequenceLengths(mlir::func::FuncOp entry,
+                         SpecializationContract contract) {
+  llvm::SmallVector<mlir::Value> values;
+  auto add = [&](mlir::Value value) {
+    if (!containsValue(values, value))
+      values.push_back(value);
+  };
+
+  entry.walk([&](mlir::Operation *op) {
+    if (isE5EntrySequenceDim(op, entry, contract))
+      add(op->getResult(0));
+  });
+
+  // The imported position-id slice computes a clamped size and then asserts
+  // that it equals the input width. Treat such asserted equalities as proofs,
+  // not arbitrary arithmetic as sequence-length provenance.
+  bool changed;
+  do {
+    changed = false;
+    entry.walk([&](mlir::Operation *op) {
+      if (op->getName().getStringRef() != "cf.assert" ||
+          op->getNumOperands() != 1)
+        return;
+      auto compare = op->getOperand(0).getDefiningOp<mlir::arith::CmpIOp>();
+      if (!compare ||
+          compare.getPredicate() != mlir::arith::CmpIPredicate::eq)
+        return;
+      bool lhsKnown = containsValue(values, compare.getLhs());
+      bool rhsKnown = containsValue(values, compare.getRhs());
+      if (lhsKnown && !rhsKnown) {
+        add(compare.getRhs());
+        changed = true;
+      } else if (rhsKnown && !lhsKnown) {
+        add(compare.getLhs());
+        changed = true;
+      }
+    });
+  } while (changed);
+  return values;
+}
+
+static bool isE5ExpandShapePair(mlir::RankedTensorType source,
+                                mlir::RankedTensorType result) {
+  if (source.getElementType() != result.getElementType())
+    return false;
+  auto sourceShape = source.getShape();
+  auto resultShape = result.getShape();
+  if (source.getElementType().isInteger(64))
+    return sourceShape.equals({kBatch, mlir::ShapedType::kDynamic}) &&
+           resultShape.equals(
+               {kBatch, 1, 1, mlir::ShapedType::kDynamic});
+  if (!source.getElementType().isF32())
+    return false;
+
+  return (sourceShape.equals({mlir::ShapedType::kDynamic, kE5Hidden}) &&
+          resultShape.equals(
+              {kBatch, mlir::ShapedType::kDynamic, kE5Hidden})) ||
+         (sourceShape.equals(
+              {kBatch, mlir::ShapedType::kDynamic, kE5Hidden}) &&
+          resultShape.equals({kBatch, mlir::ShapedType::kDynamic, kE5Heads,
+                              kE5HeadSize})) ||
+         (sourceShape.equals({kE5Heads, mlir::ShapedType::kDynamic,
+                              mlir::ShapedType::kDynamic}) &&
+          resultShape.equals({kBatch, kE5Heads,
+                              mlir::ShapedType::kDynamic,
+                              mlir::ShapedType::kDynamic})) ||
+         (sourceShape.equals(
+              {kBatch, kE5Heads, mlir::ShapedType::kDynamic}) &&
+          resultShape.equals(
+              {kBatch, kE5Heads, mlir::ShapedType::kDynamic, 1})) ||
+         (sourceShape.equals(
+              {kE5Heads, mlir::ShapedType::kDynamic, kE5HeadSize}) &&
+          resultShape.equals({kBatch, kE5Heads,
+                              mlir::ShapedType::kDynamic, kE5HeadSize})) ||
+         (sourceShape.equals({kBatch, mlir::ShapedType::kDynamic}) &&
+          resultShape.equals(
+              {kBatch, mlir::ShapedType::kDynamic, 1}));
+}
+
+static bool isE5CollapseShapePair(mlir::RankedTensorType source,
+                                  mlir::RankedTensorType result) {
+  if (source.getElementType() != result.getElementType())
+    return false;
+  auto sourceShape = source.getShape();
+  auto resultShape = result.getShape();
+  if (source.getElementType().isInteger(64))
+    return sourceShape.equals({kBatch, mlir::ShapedType::kDynamic}) &&
+           resultShape.equals({mlir::ShapedType::kDynamic});
+  if (!source.getElementType().isF32())
+    return false;
+
+  return (sourceShape.equals(
+              {kBatch, kE5Heads, mlir::ShapedType::kDynamic, kE5HeadSize}) &&
+          resultShape.equals(
+              {kE5Heads, mlir::ShapedType::kDynamic, kE5HeadSize})) ||
+         (sourceShape.equals({kBatch, kE5Heads, kE5HeadSize,
+                              mlir::ShapedType::kDynamic}) &&
+          resultShape.equals({kE5Heads, kE5HeadSize,
+                              mlir::ShapedType::kDynamic})) ||
+         (sourceShape.equals({kBatch, kE5Heads,
+                              mlir::ShapedType::kDynamic,
+                              mlir::ShapedType::kDynamic}) &&
+          resultShape.equals({kE5Heads, mlir::ShapedType::kDynamic,
+                              mlir::ShapedType::kDynamic})) ||
+         (sourceShape.equals({kBatch, mlir::ShapedType::kDynamic, kE5Heads,
+                              kE5HeadSize}) &&
+          resultShape.equals(
+              {kBatch, mlir::ShapedType::kDynamic, kE5Hidden}));
+}
+
+static bool hasI64ArrayAttr(mlir::Operation *op, llvm::StringRef name,
+                            llvm::ArrayRef<int64_t> expected) {
+  auto attr = op->getAttrOfType<mlir::DenseI64ArrayAttr>(name);
+  return attr && attr.asArrayRef() == expected;
+}
+
+static bool isE5PositionSlice(mlir::Operation *op,
+                              int64_t resultSequenceDimension) {
+  if (op->getName().getStringRef() != "tensor.extract_slice" ||
+      op->getNumOperands() != 2 || op->getNumResults() != 1)
+    return false;
+  auto sourceType = mlir::dyn_cast<mlir::RankedTensorType>(
+      op->getOperand(0).getType());
+  auto resultType = mlir::dyn_cast<mlir::RankedTensorType>(
+      op->getResult(0).getType());
+  return sourceType && resultType &&
+         sourceType.getElementType().isInteger(64) &&
+         resultType.getElementType().isInteger(64) &&
+         sourceType.getShape().equals({kBatch, kE5MaxSequenceLength}) &&
+         resultType.getShape().equals(
+             {kBatch, resultSequenceDimension}) &&
+         hasI64ArrayAttr(op, "static_offsets", {0, 0}) &&
+         hasI64ArrayAttr(
+             op, "static_sizes",
+             {kBatch, mlir::ShapedType::kDynamic}) &&
+         hasI64ArrayAttr(op, "static_strides", {1, 1});
+}
+
+static mlir::LogicalResult
+validateE5ShapeOperation(mlir::func::FuncOp entry, mlir::Operation *op,
+                         llvm::ArrayRef<mlir::Value> sequenceLengths,
+                         SpecializationContract contract) {
+  llvm::StringRef name = op->getName().getStringRef();
+  if (name == "tensor.dim") {
+    if (!isE5EntrySequenceDim(op, entry, contract))
+      return op->emitError()
+             << "in @" << entry.getSymName()
+             << ", tensor.dim must read an E5 entry argument at axis 1";
+    return mlir::success();
+  }
+
+  if (name == "tensor.empty") {
+    auto resultType = mlir::cast<mlir::RankedTensorType>(
+        op->getResult(0).getType());
+    if (op->getNumOperands() != countDynamicDims(resultType))
+      return op->emitError()
+             << "in @" << entry.getSymName()
+             << ", tensor.empty dynamic-size count does not match its result";
+    for (mlir::Value size : op->getOperands()) {
+      if (!containsValue(sequenceLengths, size))
+        return op->emitError()
+               << "in @" << entry.getSymName()
+               << ", dynamic tensor.empty size is not proven equal to the E5 "
+                  "entry sequence dimension";
+    }
+    return mlir::success();
+  }
+
+  if (name == "tensor.expand_shape") {
+    auto sourceType = mlir::cast<mlir::RankedTensorType>(
+        op->getOperand(0).getType());
+    auto resultType = mlir::cast<mlir::RankedTensorType>(
+        op->getResult(0).getType());
+    if (!isE5ExpandShapePair(sourceType, resultType))
+      return op->emitError()
+             << "in @" << entry.getSymName()
+             << ", unsupported E5 tensor.expand_shape type pair";
+    if (op->getNumOperands() != 1 + countDynamicDims(resultType))
+      return op->emitError()
+             << "in @" << entry.getSymName()
+             << ", tensor.expand_shape dynamic-size count does not match its "
+                "result";
+    for (mlir::Value size : op->getOperands().drop_front()) {
+      if (!containsValue(sequenceLengths, size))
+        return op->emitError()
+               << "in @" << entry.getSymName()
+               << ", dynamic tensor.expand_shape size is not proven equal to "
+                  "the E5 entry sequence dimension";
+    }
+    return mlir::success();
+  }
+
+  if (name == "tensor.collapse_shape") {
+    auto sourceType = mlir::cast<mlir::RankedTensorType>(
+        op->getOperand(0).getType());
+    auto resultType = mlir::cast<mlir::RankedTensorType>(
+        op->getResult(0).getType());
+    if (!isE5CollapseShapePair(sourceType, resultType))
+      return op->emitError()
+             << "in @" << entry.getSymName()
+             << ", unsupported E5 tensor.collapse_shape type pair";
+    return mlir::success();
+  }
+
+  if (name == "tensor.extract_slice") {
+    if (!isE5PositionSlice(op, mlir::ShapedType::kDynamic))
+      return op->emitError()
+             << "in @" << entry.getSymName()
+             << ", unsupported E5 tensor.extract_slice pattern";
+    if (!containsValue(sequenceLengths, op->getOperand(1)))
+      return op->emitError()
+             << "in @" << entry.getSymName()
+             << ", tensor.extract_slice size is not proven equal to the E5 "
+                "entry sequence dimension";
+  }
+  return mlir::success();
+}
+
+static mlir::LogicalResult validateE5Calls(mlir::func::FuncOp entry) {
+  mlir::WalkResult walkResult = entry.walk([&](mlir::Operation *op) {
+    llvm::StringRef name = op->getName().getStringRef();
+    if (name == "func.call_indirect") {
+      op->emitError() << "in @" << entry.getSymName()
+                      << ", E5-small-v2 does not support indirect calls";
+      return mlir::WalkResult::interrupt();
+    }
+    if (name != "func.call")
+      return mlir::WalkResult::advance();
+
+    auto callee = op->getAttrOfType<mlir::FlatSymbolRefAttr>("callee");
+    if (callee && callee.getValue() == entry.getSymName())
+      op->emitError() << "in @" << entry.getSymName()
+                      << ", E5-small-v2 does not support recursion";
+    else
+      op->emitError() << "in @" << entry.getSymName()
+                      << ", E5-small-v2 requires one inlined function body";
+    return mlir::WalkResult::interrupt();
+  });
+  return walkResult.wasInterrupted() ? mlir::failure() : mlir::success();
+}
+
+static mlir::LogicalResult
+validateE5SpecializedBody(mlir::func::FuncOp entry,
+                          SpecializationContract contract) {
+  if (mlir::failed(validateE5Calls(entry)))
+    return mlir::failure();
+  llvm::SmallVector<mlir::Value> sequenceLengths =
+      collectE5SequenceLengths(entry, contract);
+
+  mlir::WalkResult walkResult = entry.walk([&](mlir::Operation *op) {
+    if (op->getName().getStringRef() == "tensor.extract_slice") {
+      if (mlir::failed(validateE5ShapeOperation(entry, op, sequenceLengths,
+                                                contract)))
+        return mlir::WalkResult::interrupt();
+      return mlir::WalkResult::advance();
+    }
+    if (!hasDynamicTensorOperandOrResult(op))
+      return mlir::WalkResult::advance();
+    if (!isAllowedDynamicTensorOp(op, contract)) {
+      op->emitError() << "in @" << entry.getSymName()
+                      << ", unsupported dynamic tensor operation "
+                      << op->getName().getStringRef();
+      return mlir::WalkResult::interrupt();
+    }
+    if (mlir::failed(validateDynamicTensorValueTypes(entry, op, contract)) ||
+        mlir::failed(validateE5ShapeOperation(entry, op, sequenceLengths,
+                                              contract))) {
+      return mlir::WalkResult::interrupt();
+    }
+    return mlir::WalkResult::advance();
+  });
+  return walkResult.wasInterrupted() ? mlir::failure() : mlir::success();
+}
+
 static mlir::LogicalResult
 validateSpecializedBody(mlir::func::FuncOp entry,
                         SpecializationContract contract) {
+  if (contract.kind == ContractKind::E5)
+    return validateE5SpecializedBody(entry, contract);
+
   mlir::Value entryInput = entry.getArgument(0);
 
   mlir::LogicalResult result = mlir::success();
@@ -353,7 +704,7 @@ validateSpecializedBody(mlir::func::FuncOp entry,
     if (!hasDynamicTensorOperandOrResult(op))
       return mlir::WalkResult::advance();
 
-    if (!isAllowedDynamicTensorOp(op)) {
+    if (!isAllowedDynamicTensorOp(op, contract)) {
       result = op->emitError() << "in @" << entry.getSymName()
                                << ", unsupported dynamic tensor operation "
                                << op->getName().getStringRef();
@@ -488,6 +839,19 @@ static mlir::LogicalResult validateE5Entry(mlir::func::FuncOp entry) {
                            "result 0");
 }
 
+static mlir::LogicalResult
+validateE5Lengths(mlir::func::FuncOp entry,
+                  llvm::ArrayRef<int64_t> lengths) {
+  for (int64_t length : lengths) {
+    if (length > kE5MaxSequenceLength)
+      return entry.emitError()
+             << "E5-small-v2 specialization length " << length
+             << " exceeds the position-embedding limit "
+             << kE5MaxSequenceLength;
+  }
+  return mlir::success();
+}
+
 static mlir::LogicalResult validateEntry(mlir::func::FuncOp entry,
                                          ContractKind kind) {
   switch (kind) {
@@ -510,10 +874,14 @@ static mlir::Type refineTensorType(mlir::Type type,
 
   auto shape = tensorType.getShape();
   if (contract.kind == ContractKind::E5) {
-    if (tensorType.getElementType().isInteger(64) &&
-        shape.equals({kBatch, mlir::ShapedType::kDynamic}))
-      return tensorType.clone({kBatch, sequenceLength});
-    return type;
+    if (!isE5DynamicTensorType(tensorType))
+      return type;
+    llvm::SmallVector<int64_t> staticShape(shape);
+    for (int64_t &dimension : staticShape) {
+      if (mlir::ShapedType::isDynamic(dimension))
+        dimension = sequenceLength;
+    }
+    return tensorType.clone(staticShape);
   }
 
   if (!tensorType.getElementType().isF32())
@@ -577,6 +945,20 @@ static void refineExpandShape(mlir::Operation *op) {
       mlir::DenseI64ArrayAttr::get(op->getContext(), resultType.getShape()));
 }
 
+static void refineE5ExtractSlice(mlir::Operation *op,
+                                 int64_t sequenceLength) {
+  if (!isE5PositionSlice(op, sequenceLength))
+    return;
+
+  mlir::SmallVector<mlir::Value> operands{op->getOperand(0)};
+  op->setOperands(operands);
+  op->setAttr("operandSegmentSizes",
+              mlir::DenseI32ArrayAttr::get(op->getContext(), {1, 0, 0, 0}));
+  op->setAttr(
+      "static_sizes",
+      mlir::DenseI64ArrayAttr::get(op->getContext(), {kBatch, sequenceLength}));
+}
+
 static void refineClone(mlir::func::FuncOp clone,
                         SpecializationContract contract,
                         int64_t sequenceLength) {
@@ -589,9 +971,11 @@ static void refineClone(mlir::func::FuncOp clone,
       refineValueType(result, contract, sequenceLength);
   });
 
-  clone.walk([](mlir::Operation *op) {
+  clone.walk([&](mlir::Operation *op) {
     dropStaticEmptySizes(op);
     refineExpandShape(op);
+    if (contract.kind == ContractKind::E5)
+      refineE5ExtractSlice(op, sequenceLength);
   });
 }
 
@@ -814,6 +1198,10 @@ public:
       contract = getStageBContract();
 
     if (mlir::failed(validateEntry(entry, contract.kind))) {
+      signalPassFailure();
+      return;
+    }
+    if (isE5 && mlir::failed(validateE5Lengths(entry, parsedLengths))) {
       signalPassFailure();
       return;
     }

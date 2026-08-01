@@ -24,6 +24,8 @@ INLINE_DENSE_RE = re.compile(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifact-dir", type=Path, default=DEFAULT_ARTIFACT_DIR)
+    parser.add_argument("--core", type=Path)
+    parser.add_argument("--specialized-lengths", default="")
     return parser.parse_args()
 
 
@@ -62,8 +64,57 @@ def check_no_dense_payloads(core: str) -> None:
             )
 
 
+def extract_function(core: str, name: str) -> str:
+    match = re.search(rf"\bfunc\.func(?: private)? @{re.escape(name)}\(", core)
+    if match is None:
+        raise AssertionError(f"missing function @{name}")
+    body_start = core.find("{", match.end())
+    if body_start == -1:
+        raise AssertionError(f"missing body for @{name}")
+    depth = 0
+    for offset, character in enumerate(core[body_start:], start=body_start):
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return core[match.start() : offset + 1]
+    raise AssertionError(f"unterminated body for @{name}")
+
+
+def parse_lengths(text: str) -> list[int]:
+    if not text:
+        return []
+    lengths = [int(item) for item in text.split(",")]
+    if any(length <= 0 for length in lengths) or len(lengths) != len(set(lengths)):
+        raise AssertionError("--specialized-lengths must be unique positive integers")
+    return sorted(lengths)
+
+
+def check_static_clones(
+    core: str, lengths: list[int], initializer_count: int
+) -> None:
+    generic = extract_function(core, "sentence_embedding_generic")
+    if generic.count('"util.global.load"') != initializer_count:
+        raise AssertionError("generic E5 function must load every shared parameter")
+
+    for length in lengths:
+        clone = extract_function(core, f"sentence_embedding_s{length}")
+        if "?" in clone:
+            raise AssertionError(f"E5 S={length} clone retains a dynamic dimension")
+        if clone.count(f"tensor<1x{length}xi64>") < 3:
+            raise AssertionError(f"E5 S={length} clone has the wrong token ABI")
+        if "-> tensor<1x384xf32>" not in clone:
+            raise AssertionError(f"E5 S={length} clone has the wrong result type")
+        if clone.count('"util.global.load"') != initializer_count:
+            raise AssertionError(
+                f"E5 S={length} clone must load every shared parameter"
+            )
+
+
 def main() -> int:
     args = parse_args()
+    lengths = parse_lengths(args.specialized_lengths)
     model = onnx.load(
         args.artifact_dir / "sentence_embedding.onnx", load_external_data=False
     )
@@ -84,28 +135,38 @@ def main() -> int:
         if actual != expected:
             raise AssertionError(f"IRPA bytes differ for {key}")
 
-    core = (args.artifact_dir / "sentence_embedding.core.mlir").read_text(
-        encoding="utf-8"
-    )
+    core_path = args.core or args.artifact_dir / "sentence_embedding.core.mlir"
+    core = core_path.read_text(encoding="utf-8")
     references = REFERENCE_RE.findall(core)
     if set(references) != set(initializers) or len(references) != len(initializers):
         raise AssertionError("core MLIR must reference each canonical parameter once")
     if core.count('"util.global"') != len(initializers):
         raise AssertionError("core MLIR must contain one global per initializer")
     check_no_dense_payloads(core)
-    if LENGTH_SUFFIX_RE.search(core) or any(
-        LENGTH_SUFFIX_RE.search(key) for key in entries
+    if any(LENGTH_SUFFIX_RE.search(key) for key in entries) or any(
+        LENGTH_SUFFIX_RE.search(reference) for reference in references
     ):
         raise AssertionError("found a length-specific parameter copy")
-    if core.count("shortseq.e5_small_v2") != 1 or core.count("shortseq.entry") != 1:
-        raise AssertionError("core MLIR must contain one marked E5 entry")
+    expected_markers = 0 if lengths else 1
+    if (
+        core.count("shortseq.e5_small_v2") != expected_markers
+        or core.count("shortseq.entry") != expected_markers
+    ):
+        raise AssertionError("core MLIR has the wrong number of E5 entry markers")
+    if lengths:
+        check_static_clones(core, lengths, len(initializers))
 
     canonical_bytes = sum(entry.length for entry in entries.values())
-    print("PASS E5 bridge parameter identity")
+    print("PASS E5 bridge parameter identity and IR structure")
+    if lengths:
+        print("static_sequence_lengths=" + ",".join(map(str, lengths)))
     print(f"canonical_parameter_bytes={canonical_bytes}")
     print("duplicated_parameter_bytes=0")
     print("prepacked_weight_bytes=not_created_at_core_boundary")
-    print("variant_metadata_bytes=0")
+    if lengths:
+        print("variant_metadata_bytes=not_serialized_at_textual_core_boundary")
+    else:
+        print("variant_metadata_bytes=0")
     print("active_scratch_bytes=not_allocated_at_core_boundary")
     return 0
 
