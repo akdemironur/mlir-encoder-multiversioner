@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--lengths", default="16")
     parser.add_argument("--entry", default="mlp")
+    parser.add_argument("--allow-unregistered-dialect", action="store_true")
     return parser.parse_args()
 
 
@@ -38,6 +39,7 @@ def parse_lengths(text: str) -> list[int]:
 def run_pass(args: argparse.Namespace) -> str:
     command = [
         str(args.mlir_opt),
+        *(["--allow-unregistered-dialect"] if args.allow_unregistered_dialect else []),
         f"--load-pass-plugin={args.plugin}",
         "--pass-pipeline="
         f"builtin.module(shortseq-specialize{{lengths={args.lengths}}})",
@@ -85,7 +87,7 @@ def parse_wrapper(ir: str, entry: str) -> tuple[list[str], str]:
 
 def parse_call_args(wrapper: str, entry: str) -> dict[str, list[str]]:
     call_re = re.compile(
-        rf"func\.call @(?P<callee>{re.escape(entry)}_s\d+|"
+        rf"(?:func\.)?call @(?P<callee>{re.escape(entry)}_s\d+|"
         rf"{re.escape(entry)}_generic)\((?P<args>[^)]*)\)"
     )
     calls: dict[str, list[str]] = {}

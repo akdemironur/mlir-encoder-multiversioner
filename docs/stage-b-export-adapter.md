@@ -51,6 +51,12 @@ uv run --frozen --group numerical python scripts/check_stage_b_artifact.py \
 sample inputs, and no length-specific parameter copies. It is benchmark
 plumbing, not an exported model.
 
+The next fixed adapter step packages those ten arrays into one canonical IREE
+parameter archive and emits an MLIR module with symbolic module-level loads.
+The public `@run_encoder_block` then accepts only the activation; the marked
+internal `@encoder_block` retains explicit parameter operands for auditable
+forwarding. See [stage-b-weight-bundle.md](stage-b-weight-bundle.md).
+
 ## IREE Benchmark
 
 Run the artifact-backed Stage B benchmark:

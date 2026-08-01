@@ -339,3 +339,10 @@ build/llvm/bin/mlir-opt \
   --pass-pipeline='builtin.module(shortseq-specialize{lengths=4,8})' \
   examples/stage_b/contract_encoder_block.mlir
 ```
+
+For the fixed external-weight adapter, build one `.irpa` archive and a symbolic
+MLIR module whose public entry takes only the activation. Weight operands remain
+an internal ABI so every static variant and the generic fallback receive the
+same canonical values. See
+[stage-b-weight-bundle.md](docs/stage-b-weight-bundle.md) for commands and
+accounting boundaries.
