@@ -20,6 +20,7 @@ from bench_e5_static_causality import (  # noqa: E402
     bootstrap_median_ci,
     equivalent_effect_supported,
     effect_record,
+    parse_cpu_list,
     positive_effect_supported,
 )
 
@@ -62,6 +63,7 @@ def main() -> int:
     effect["bootstrap_95_percent_ci"] = [-0.2, 0.4]
     assert equivalent_effect_supported(effect, 1.0)
     assert not equivalent_effect_supported(effect, 0.1)
+    assert parse_cpu_list("0,2-4,10") == [0, 2, 3, 4, 10]
     print("PASS E5 benchmark helper parsers")
     return 0
 

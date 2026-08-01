@@ -345,6 +345,19 @@ def equivalent_effect_supported(
     return lower >= -margin_percent and upper <= margin_percent
 
 
+def parse_cpu_list(text: str) -> list[int]:
+    cpus = []
+    for item in text.split(","):
+        bounds = [int(value) for value in item.split("-")]
+        if len(bounds) == 1:
+            cpus.append(bounds[0])
+        elif len(bounds) == 2 and bounds[0] <= bounds[1]:
+            cpus.extend(range(bounds[0], bounds[1] + 1))
+        else:
+            raise ValueError(f"invalid Linux CPU list: {text!r}")
+    return cpus
+
+
 def read_cpu_control(cpu: int | None) -> dict[str, object]:
     if cpu is None:
         return {
@@ -365,23 +378,32 @@ def read_cpu_control(cpu: int | None) -> dict[str, object]:
     no_turbo = read(Path("/sys/devices/system/cpu/intel_pstate/no_turbo"))
     fixed_frequency = minimum is not None and minimum == maximum
     turbo_disabled = no_turbo == "1"
-    no_smt_sibling = siblings == str(cpu)
+    sibling_cpus = parse_cpu_list(siblings) if siblings is not None else []
+    online_siblings = []
+    for sibling in sibling_cpus:
+        if sibling == cpu:
+            continue
+        online = read(Path(f"/sys/devices/system/cpu/cpu{sibling}/online"))
+        if online != "0":
+            online_siblings.append(sibling)
+    smt_isolation_verified = siblings is not None and not online_siblings
     frequency_and_turbo_controlled = fixed_frequency and turbo_disabled
     return {
-        "controlled": frequency_and_turbo_controlled and no_smt_sibling,
+        "controlled": frequency_and_turbo_controlled and smt_isolation_verified,
         "frequency_and_turbo_controlled": frequency_and_turbo_controlled,
-        "smt_sibling_isolation_verified": no_smt_sibling,
+        "smt_sibling_isolation_verified": smt_isolation_verified,
         "governor": governor,
         "scaling_min_freq": minimum,
         "scaling_max_freq": maximum,
         "intel_pstate_no_turbo": no_turbo,
         "thread_siblings": siblings,
+        "online_siblings": online_siblings,
         "frequency_note": (
             "frequency control requires fixed min/max frequency and disabled turbo"
         ),
         "smt_note": (
-            "SMT isolation is considered verified only when the selected logical "
-            "CPU has no sibling; external sibling idleness is not inferred"
+            "SMT isolation is verified only when the selected logical CPU has no "
+            "sibling or every sibling is offline; external idleness is not inferred"
         ),
     }
 

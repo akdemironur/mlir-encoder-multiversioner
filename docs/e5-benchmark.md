@@ -169,8 +169,8 @@ standalone-versus-production layout, and public-clone observer effects must all
 remain equivalent to their controls. The report exposes every check separately.
 
 This timing pattern is still insufficient by itself: frequency and turbo must
-be controlled, SMT sibling isolation must be established, and the retained
-compiler/code evidence must be reviewed before making a causal claim.
+be controlled, the selected CPU must have no online SMT sibling, and the
+retained compiler/code evidence must be reviewed before making a causal claim.
 `--collect-perf` records one deterministic, unpaired whole-process counter run
 per path. Those one-shot counters include initialization and warmup; they are
 exploratory diagnostics and cannot support a causal mechanism claim.
