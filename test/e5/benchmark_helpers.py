@@ -16,6 +16,12 @@ from bench_e5_iree import (  # noqa: E402
     parse_trials,
     parse_variants,
 )
+from bench_e5_static_causality import (  # noqa: E402
+    bootstrap_median_ci,
+    equivalent_effect_supported,
+    effect_record,
+    positive_effect_supported,
+)
 
 
 def main() -> int:
@@ -37,6 +43,25 @@ def main() -> int:
         }
     )
     assert parse_trials(benchmark_json) == [2.5, 3.0]
+    lower, upper = bootstrap_median_ci([1.0, 2.0, 3.0], 1000, 7)
+    assert (lower, upper) == (1.0, 3.0)
+    effect = effect_record(
+        {
+            (256, "generic"): [10.0, 20.0, 30.0],
+            (256, "static"): [9.0, 18.0, 27.0],
+        },
+        256,
+        "generic",
+        "static",
+        1000,
+        7,
+    )
+    assert effect["median_paired_reduction_percent"] == 10.0
+    assert effect["bootstrap_95_percent_ci"] == [10.0, 10.0]
+    assert positive_effect_supported(effect)
+    effect["bootstrap_95_percent_ci"] = [-0.2, 0.4]
+    assert equivalent_effect_supported(effect, 1.0)
+    assert not equivalent_effect_supported(effect, 0.1)
     print("PASS E5 benchmark helper parsers")
     return 0
 

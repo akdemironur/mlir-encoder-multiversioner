@@ -123,3 +123,54 @@ scaling remained enabled. No causal performance conclusion follows from these
 wall-clock data. Explaining an effect would require supporting optimized IR,
 generated code, or hardware-counter evidence, which is intentionally outside
 this milestone.
+
+## Matched static-path causality experiment
+
+`bench_e5_static_causality.py` is an experiment-only harness for S=256 and
+S=512. These lengths are not added to the default specialization contract. It
+compiles the audited dynamic core and two multiversioned modules produced from
+that same core. The production-topology module retains private static clones;
+its unchanged generic body and real dispatch wrapper provide the primary
+within-artifact comparison:
+
+* `production-generic` calls the unchanged dynamic body directly;
+* `production-dispatched` calls the real wrapper and its private static clone.
+
+A separate observable module makes the exact clones public. Its
+`direct-static-diagnostic`, `observable-generic`, and `observable-dispatched`
+paths estimate direct-clone and dispatch costs, but are explicitly diagnostic:
+changing symbol visibility may affect compilation. Comparing the observable
+paths with their production counterparts quantifies that observer effect.
+
+At unsupported S=257, `dispatched-fallback` traverses the same guards and calls
+the unchanged generic body. This is the guarded-generic negative control. The
+standalone dynamic module remains a module-layout control.
+
+Run the experiment after `check-e5`:
+
+```sh
+uv run --frozen --group e5 python benchmarks/bench_e5_static_causality.py \
+  --sessions 20 \
+  --cpu 0 \
+  --collect-perf
+```
+
+Each session runs every path in a separate process and randomizes their order
+with a recorded seed. The report retains raw timings, paired bootstrap
+intervals, numerical checks, parameter accounting, compilation phases,
+scheduling statistics, executable sources/configurations/intermediates, VM
+disassembly, allocator peaks, and warmed RSS.
+
+A useful causal signature requires `production-dispatched` to beat
+`production-generic`, and the diagnostic direct clone to beat its observable
+generic control, at both target lengths. With the predeclared default ±1%
+equivalence margin, diagnostic dispatch overhead, the S=257 guarded fallback,
+standalone-versus-production layout, and public-clone observer effects must all
+remain equivalent to their controls. The report exposes every check separately.
+
+This timing pattern is still insufficient by itself: frequency and turbo must
+be controlled, SMT sibling isolation must be established, and the retained
+compiler/code evidence must be reviewed before making a causal claim.
+`--collect-perf` records one deterministic, unpaired whole-process counter run
+per path. Those one-shot counters include initialization and warmup; they are
+exploratory diagnostics and cannot support a causal mechanism claim.

@@ -1090,7 +1090,8 @@ static void emitDispatchWrapper(mlir::func::FuncOp genericFunc,
 static mlir::LogicalResult
 emitSpecializations(mlir::ModuleOp module, mlir::func::FuncOp entry,
                     llvm::ArrayRef<int64_t> lengths,
-                    SpecializationContract contract) {
+                    SpecializationContract contract,
+                    bool exposeStaticVariants) {
   mlir::SymbolTable symbolTable(module);
   std::string originalName = entry.getSymName().str();
   std::string genericName = originalName + "_generic";
@@ -1117,7 +1118,10 @@ emitSpecializations(mlir::ModuleOp module, mlir::func::FuncOp entry,
     mlir::IRMapping mapper;
     auto staticFunc = entry.clone(mapper);
     staticFunc.setName(originalName + "_s" + std::to_string(length));
-    staticFunc.setPrivate();
+    if (exposeStaticVariants)
+      staticFunc.setPublic();
+    else
+      staticFunc.setPrivate();
     refineClone(staticFunc, contract, length);
 
     builder.insert(staticFunc);
@@ -1141,6 +1145,7 @@ public:
       : mlir::PassWrapper<ShortSeqSpecializePass,
                           mlir::OperationPass<mlir::ModuleOp>>() {
     lengths = other.lengths;
+    exposeStaticVariants = other.exposeStaticVariants;
   }
 
   void getDependentDialects(mlir::DialectRegistry &registry) const override {
@@ -1157,6 +1162,11 @@ public:
   ListOption<int64_t> lengths{
       *this, "lengths",
       llvm::cl::desc("Comma-separated exact sequence lengths to specialize")};
+
+  Option<bool> exposeStaticVariants{
+      *this, "expose-static-variants",
+      llvm::cl::desc("Expose static clones as public benchmark entries"),
+      llvm::cl::init(false)};
 
   void runOnOperation() final {
     auto module = getOperation();
@@ -1211,8 +1221,8 @@ public:
       return;
     }
 
-    if (mlir::failed(
-            emitSpecializations(module, entry, parsedLengths, contract))) {
+    if (mlir::failed(emitSpecializations(module, entry, parsedLengths, contract,
+                                         exposeStaticVariants))) {
       signalPassFailure();
       return;
     }
