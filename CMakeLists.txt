@@ -122,3 +122,10 @@ add_custom_target(check-shortseq
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
 )
+
+add_custom_target(fetch-e5
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen python scripts/fetch_e5_artifacts.py
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  USES_TERMINAL
+)
