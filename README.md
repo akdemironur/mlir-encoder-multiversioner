@@ -353,11 +353,13 @@ Stage C targets the official f32 `intfloat/e5-small-v2` ONNX artifact at the
 immutable revision `ffb93f3bd4047442299a41ebb6fa998a38507c52`. Its public
 entry accepts batch-1 dynamic-width `input_ids`, `attention_mask`, and
 `token_type_ids` tensors and returns one mask-pooled, L2-normalized
-`tensor<1x384xf32>` embedding. Exact lengths are `16,32,64,128`; all three
-widths must equal the selected length. Otherwise-valid width tuples use the
-generic fallback, while invalid fixtures are rejected by the caller-side
-wrapper. Valid widths are `1..512`, matching the position-embedding table. The
-pass never performs caller-side padding or tokenization.
+`tensor<1x384xf32>` embedding. The default exact lengths are
+`16,32,64,128`; all three widths must equal the selected length.
+Otherwise-valid width tuples use the generic fallback, while invalid fixtures
+are rejected by the caller-side wrapper. Valid widths are `1..512`, matching
+the position-embedding table. The pass never performs caller-side padding or
+tokenization. Lengths `256,512` are evaluated separately below; they are not
+part of the default specialization contract.
 
 The full ABI, input validation, parameter sharing, accounting boundaries, and
 benchmark checklist are in
@@ -407,3 +409,54 @@ from fixed-width ONNX metadata and reuses the same IRPA; it does not invoke the
 multiversioning pass. See [the E5 benchmark note](docs/e5-benchmark.md) for the
 measurement boundary, current descriptive snapshot, and scratch-accounting
 limitation.
+
+### Experimental 256/512 matched controls
+
+The experiment-only harness compares six matched paths at S=256 and S=512:
+standalone dynamic, same-module generic, production dispatch, observable
+generic, direct static diagnostic, and observable dispatch. It also exercises
+the guarded generic fallback at S=257. Run it after `check-e5`:
+
+```sh
+uv run --frozen --group e5 python benchmarks/bench_e5_static_causality.py \
+  --sessions 20 \
+  --cpu 0 \
+  --collect-perf
+```
+
+The 2026-08-01 run used CPU 1 and 20 randomized fresh-process sessions. All
+numerical checks and predeclared timing/equivalence controls passed; the formal
+host-control readiness gate did not:
+
+| S | Production generic median | Production dispatched median | Paired reduction | Bootstrap 95% CI |
+| ---: | ---: | ---: | ---: | ---: |
+| 256 | 6025.8101 ms | 5807.6255 ms | 3.605% | [3.576%, 3.648%] |
+| 512 | 14090.2984 ms | 12464.2150 ms | 11.507% | [11.426%, 11.588%] |
+
+Calling the diagnostic static clone directly reproduced reductions of 3.597%
+and 11.491%, while direct-static versus dispatched-static differed by at most
+0.097%. The dynamic/module-layout, clone-visibility, and S=257 fallback
+controls remained within the predeclared +/-1% equivalence margin. Together
+with the retained fixed-shape IR and generated-code differences, these controls
+provide strong evidence that selecting the pass-produced static path accounts
+for the measured reduction in this run with pinned IREE flags. The harness's
+formal causal-readiness gate remains false because the host controls below were
+unavailable. The experiment does not identify which lower-level generated-code
+change dominates or establish the same effect on other machines.
+
+Artifact costs were:
+
+| Artifact | Compile | VMFB | VM bytecode | Embedded executable |
+| --- | ---: | ---: | ---: | ---: |
+| Dynamic | 2.611 s | 135684 bytes | 57240 bytes | 61244 bytes |
+| Production multiversioned | 7.001 s | 278918 bytes | 133256 bytes | 125724 bytes |
+
+Both used the same 198-entry, 132852736-byte IRPA; no duplicated or
+length-specific parameter bytes were found. Variant metadata is not isolated
+and remains included in the VM bytecode and VMFB totals. Prepacked-weight and
+active-scratch bytes remain unisolated. One-shot warmed RSS for production
+generic/dispatched was 162447360/162754560 bytes at S=256 and
+191213568/198152192 bytes at S=512. Those probes are not distributions and
+establish no RSS effect. CPU frequency/turbo, SMT isolation, ASLR, and hardware
+counters could not be controlled on this host, so those limitations remain
+visible in the detailed [E5 benchmark report](docs/e5-benchmark.md).
