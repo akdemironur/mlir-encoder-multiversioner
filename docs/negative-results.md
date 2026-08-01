@@ -1,5 +1,24 @@
 # Negative Results
 
+## 2026-08-01: host controls unavailable for E5 causal benchmark
+
+The 20-session S=256/S=512 matched-control experiment could not apply its
+planned host controls. This environment requires an interactive sudo
+credential, so the attempted setup stopped before changing the machine. A
+read-back confirmed the original state: `powersave` governor, 800 MHz--5.2 GHz
+range, turbo enabled, and online SMT sibling CPU 11. The benchmark continued
+pinned to logical CPU 1 and recorded these conditions in `summary.json`.
+ASLR also remained enabled (`randomize_va_space=2`).
+
+Hardware counters were also unavailable: `/proc/sys/kernel/perf_event_paranoid`
+was 4, and `perf stat` reported no supported accessible events. The harness
+retained that diagnostic instead of failing or silently omitting the boundary.
+
+The full timing/control signature and generated-code audit passed, but the
+formal causal-claim gate remains false because frequency/turbo control, SMT
+isolation, and counter-capable mechanism evidence were unavailable. A final
+claim-oriented repeat should also hold ASLR constant or disable it explicitly.
+
 ## 2026-08-01: E5 CPU timing does not support a causal speedup claim
 
 The final pinned one-worker LLVM CPU snapshot at `S=16,32,64,128` placed both

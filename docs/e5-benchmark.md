@@ -174,3 +174,74 @@ retained compiler/code evidence must be reviewed before making a causal claim.
 `--collect-perf` records one deterministic, unpaired whole-process counter run
 per path. Those one-shot counters include initialization and warmup; they are
 exploratory diagnostics and cannot support a causal mechanism claim.
+
+### 2026-08-01 matched-control snapshot
+
+The raw run is retained locally at
+`results/e5-small-v2/benchmarks/pinned-static-causality-s20/`. It used logical
+CPU 1, 20 randomized fresh-process sessions, one worker, and the flags above.
+All 14 numerical path checks passed. The production VMFB used private clones;
+the direct-static entries existed only in the separately accounted diagnostic
+VMFB.
+
+Primary matched effects (positive reduction favors the static path):
+
+| S | Reference | Candidate | Reference median ms | Candidate median ms | Paired median reduction | Bootstrap 95% CI |
+| ---: | --- | --- | ---: | ---: | ---: | ---: |
+| 256 | production generic | production dispatched | 6025.8101 | 5807.6255 | 3.605% | [3.576%, 3.648%] |
+| 512 | production generic | production dispatched | 14090.2984 | 12464.2150 | 11.507% | [11.426%, 11.588%] |
+| 256 | observable generic | direct static diagnostic | 6028.4114 | 5810.0592 | 3.597% | [3.544%, 3.691%] |
+| 512 | observable generic | direct static diagnostic | 14093.7023 | 12475.1504 | 11.491% | [11.441%, 11.560%] |
+
+Every predeclared ±1% equivalence control passed. Diagnostic dispatch effects
+were 0.041% at S=256 and 0.097% at S=512. The standalone/module-layout,
+public-clone observer, and S=257 guarded-fallback confidence intervals all lay
+inside [-0.246%, 0.175%]. Thus the full timing signature passed rather than
+only the two static-speed signals.
+
+Artifact costs remained separate:
+
+| Artifact | Compile s | VMFB bytes | VM bytecode | Embedded executable |
+| --- | ---: | ---: | ---: | ---: |
+| dynamic | 2.611 | 135684 | 57240 | 61244 |
+| production multiversioned | 7.001 | 278918 | 133256 | 125724 |
+| observable diagnostic | 8.912 | 342326 | 176704 | 128460 |
+
+All three modules loaded one canonical 198-entry, 132852736-byte IRPA. No
+duplicated or length-specific parameter bytes were found. Prepacked-weight and
+active-scratch bytes remain unisolated. The production static path's median
+DEVICE_LOCAL peak was lower than its same-module generic control
+(142299648 versus 145837056 bytes at S=256; 163148288 versus 170224640 bytes at
+S=512), but allocator peaks are only reported as scratch upper bounds. The
+separate one-shot warmed-RSS probes moved in the other direction: 162754560
+versus 162447360 bytes at S=256 and 198152192 versus 191213568 bytes at S=512
+for production dispatched versus production generic. These probes are not
+distributions and do not establish a path-specific RSS effect.
+
+The retained compiler evidence supports a shape-specialization mechanism:
+
+* Flow IR uses dynamic `12x?x?` attention tensors in the generic path and exact
+  `12x256x256` or `12x512x512` tensors in the static paths.
+* The generic attention executable receives four scalar shape constants and
+  reconstructs workload ordinals at runtime. The static executables have no
+  scalar shape constants or workload-ordinal operations and use fixed tensor
+  sizes and alignments.
+* The inspected attention-score matmul retains the named
+  `CPUDoubleTilingExpert` pipeline and the same tile configuration. Softmax
+  retains that pipeline and the same vector/reduction settings, but its
+  distribution changes from `[1,32,0]` in the generic executable to
+  `[6,32,0]` at S=256 and `[12,32,0]` at S=512. This is a potentially
+  performance-relevant scheduling consequence of static shapes.
+* In the retained assembly, representative dynamic/static instruction counts
+  are 173/71 for a projection matmul, 302/84 (S=256) or 82 (S=512) for the
+  attention-score matmul, 1884/1300 or 1294 for softmax, and 170/47 for the
+  pooling matvec.
+
+This is strong matched evidence that selecting the pass-produced static path is
+associated with the measured reduction and simpler shape-specialized generated
+code. The formal `causal_claim_ready` gate remains false: the host required an
+interactive sudo credential, so CPU frequency/turbo and the SMT sibling could
+not be controlled, and `perf_event_paranoid=4` prevented hardware-counter
+collection. ASLR also remained enabled (`randomize_va_space=2`). No claim is
+made about whether runtime shape removal, the softmax distribution change, or
+another generated-code consequence dominates the latency effect.
