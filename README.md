@@ -381,3 +381,7 @@ importer must reach a textual input/global-optimization boundary, export one
 `e5`-scoped IRPA, round-trip through upstream `mlir-opt`, and resume as an
 independently compiled dynamic baseline. Pass legality must remain unchanged
 until that gate succeeds.
+
+The current toolchain pins IREE `3.11.0` for both existing benchmarks and the
+E5 bridge. Earlier Stage A/B result tables remain historical measurements from
+IREE `20241104.1068`; rerun them before drawing comparisons with Stage C.

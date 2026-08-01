@@ -1,5 +1,45 @@
 # Negative Results
 
+## 2026-08-01: legacy IREE package does not reach E5's core boundary
+
+The official f32 `intfloat/e5-small-v2` `model.onnx` at revision
+`ffb93f3bd4047442299a41ebb6fa998a38507c52` was SHA-validated, adapted to
+batch one with in-graph pooling, checked against ONNX Runtime, and imported by
+`iree-import-onnx` from pinned IREE `20241104.1068`. The imported Torch MLIR is
+produced, but IREE input lowering fails before the requested
+`global-optimization` textual boundary:
+
+```sh
+uv run --frozen --group e5 python scripts/build_e5_bridge.py \
+  --mlir-opt build/llvm/bin/mlir-opt
+```
+
+```text
+sentence_embedding.imported.mlir:202:12: error: failed to legalize operation
+'torch.operator' that was explicitly marked illegal
+%198 = torch.operator "onnx.Unsqueeze"(%arg1)
+  {torch.onnx.axes = [1 : si64]}
+  : (!torch.vtensor<[1,?],si64>) -> !torch.vtensor<[1,1,?],si64>
+```
+
+This `Unsqueeze` belongs to the canonical encoder's attention-mask path, not
+the appended pooling operations. The legacy importer offers no
+opset-selection option, so rewriting encoder operations was rejected.
+
+Resolution: E5 uses the separately pinned `iree-base-compiler==3.11.0` and its
+documented `--opset-version 17` import path. That frontend legalizes the
+canonical graph and externalizes all 198 unchanged initializers directly. The
+repository pins `iree-base-compiler==3.11.0` and
+`iree-base-runtime==3.11.0`. Earlier Stage A/B results remain historical
+measurements of IREE `20241104.1068`; they are not silently relabeled as
+3.11.0 results.
+
+Stage A and Stage B benchmark smoke tests and the Stage B external-parameter
+numerical test still complete successfully with IREE `3.11.0`. Its Python
+runtime bindings print `nanobind` leak diagnostics during interpreter shutdown;
+the subprocess-based E5 baseline check avoids treating that upstream shutdown
+noise as project output.
+
 ## 2026-07-04: Stage A S=16 MLIR Runner Loop Lowering
 
 Command:

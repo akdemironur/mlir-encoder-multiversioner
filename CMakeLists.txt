@@ -139,6 +139,15 @@ add_custom_target(check-e5
           "${SHORTSEQ_UV}" run --frozen --group e5 python scripts/adapt_e5_onnx.py
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group e5 python test/e5/adapter_numerical.py
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 python scripts/build_e5_bridge.py
+          --mlir-opt "${SHORTSEQ_MLIR_OPT}"
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 python scripts/check_e5_bridge.py
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 python test/e5/bridge_checker.py
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 python test/e5/iree_dynamic_numerical.py
   DEPENDS fetch-e5
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
