@@ -118,6 +118,8 @@ add_custom_target(check-shortseq
           "${SHORTSEQ_UV}" run --frozen --group numerical python test/stage_b/tiny_gemma_numerical.py
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group numerical python test/stage_b/encoder_block_numerical.py
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group numerical python test/e5/input_validation.py
   DEPENDS ShortSeqPasses
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
@@ -126,6 +128,18 @@ add_custom_target(check-shortseq
 add_custom_target(fetch-e5
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen python scripts/fetch_e5_artifacts.py
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  USES_TERMINAL
+)
+
+add_custom_target(check-e5
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 python scripts/validate_e5_artifacts.py
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 python scripts/adapt_e5_onnx.py
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 python test/e5/adapter_numerical.py
+  DEPENDS fetch-e5
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
 )
