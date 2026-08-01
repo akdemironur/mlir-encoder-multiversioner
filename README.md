@@ -346,3 +346,38 @@ an internal ABI so every static variant and the generic fallback receive the
 same canonical values. See
 [stage-b-weight-bundle.md](docs/stage-b-weight-bundle.md) for commands and
 accounting boundaries.
+
+## Stage C: E5-small-v2 token-to-embedding
+
+Stage C targets the official f32 `intfloat/e5-small-v2` ONNX artifact at the
+immutable revision `ffb93f3bd4047442299a41ebb6fa998a38507c52`. Its public
+entry accepts batch-1 dynamic-width `input_ids`, `attention_mask`, and
+`token_type_ids` tensors and returns one mask-pooled, L2-normalized
+`tensor<1x384xf32>` embedding. Exact lengths are `16,32,64,128`; all three
+widths must equal the selected length. Otherwise-valid width tuples use the
+generic fallback, while invalid fixtures are rejected by the caller-side
+wrapper. The pass never performs caller-side padding or tokenization.
+
+The full ABI, input validation, parameter sharing, accounting boundaries, and
+benchmark checklist are in
+[docs/e5-small-v2-contract.md](docs/e5-small-v2-contract.md).
+
+Model files are ignored build inputs. Fetch and validate the pinned artifacts:
+
+```sh
+cmake --build build/shortseq-pinned --target fetch-e5
+cmake --build build/shortseq-pinned --target check-e5
+```
+
+Equivalently, the model-specific acquisition command is:
+
+```sh
+uv run --frozen python scripts/fetch_e5_artifacts.py
+```
+
+`check-shortseq` does not fetch or inspect E5 files and remains
+network-independent. `check-e5` enforces a hard bridge gate: IREE's pinned ONNX
+importer must reach a textual input/global-optimization boundary, export one
+`e5`-scoped IRPA, round-trip through upstream `mlir-opt`, and resume as an
+independently compiled dynamic baseline. Pass legality must remain unchanged
+until that gate succeeds.
