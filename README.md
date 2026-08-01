@@ -363,6 +363,12 @@ The full ABI, input validation, parameter sharing, accounting boundaries, and
 benchmark checklist are in
 [docs/e5-small-v2-contract.md](docs/e5-small-v2-contract.md).
 
+`check-e5` compares ONNX Runtime, the independently compiled dynamic VMFB, and
+the dispatched VMFB at exact widths `16,32,64,128` and fallback width `17`.
+Its fixtures cover padded and unpadded masks plus explicit E5 `query:` and
+`passage:` token prefixes. It also rechecks the one-IRPA/no-cloned-payload
+invariant before running the numerical comparison.
+
 Model files are ignored build inputs. Fetch and validate the pinned artifacts:
 
 ```sh

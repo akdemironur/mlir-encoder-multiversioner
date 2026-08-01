@@ -109,6 +109,10 @@ The manually reviewed operation counts and the 20 allowed dynamic tensor
 families are recorded in [e5-core-inventory.md](e5-core-inventory.md).
 `check-e5` regenerates that inventory, transforms the full textual core,
 verifies the result with upstream `mlir-opt`, and compiles the dispatched VMFB.
+It then compares ONNX Runtime, the independent dynamic VMFB, and every exact
+dispatch path at `S=16,32,64,128`; `S=17` exercises the generic fallback.
+The fixtures include padded and unpadded masks and explicit `query:` and
+`passage:` prefixes. An all-zero mask is rejected before runtime invocation.
 
 ## Contract-expansion checklist
 

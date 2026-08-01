@@ -175,6 +175,8 @@ add_custom_target(check-e5
           --iree-llvmcpu-target-cpu=host
           --iree-scheduling-optimize-bindings=false
           -o "${E5_RESULT_DIR}/sentence_embedding.multiversioned.vmfb"
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 python test/e5/full_numerical.py
   DEPENDS fetch-e5 ShortSeqPasses
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
