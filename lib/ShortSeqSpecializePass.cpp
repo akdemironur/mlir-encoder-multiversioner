@@ -17,6 +17,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
 #include <string>
@@ -29,21 +30,35 @@ static constexpr int64_t kStageAHidden = 384;
 static constexpr int64_t kStageAIntermediate = 1536;
 static constexpr int64_t kStageBHidden = 64;
 static constexpr int64_t kStageBIntermediate = 256;
+static constexpr int64_t kE5Hidden = 384;
 static constexpr int64_t kDefaultLength = 16;
 static constexpr unsigned kSequenceAxis = 1;
+static constexpr unsigned kActivationSequenceArguments[] = {0};
+static constexpr unsigned kE5SequenceArguments[] = {0, 1, 2};
+
+enum class ContractKind { StageA, StageB, E5 };
 
 struct SpecializationContract {
+  ContractKind kind;
   llvm::StringRef name;
   int64_t hidden;
   int64_t intermediate;
+  llvm::ArrayRef<unsigned> sequenceArguments;
 };
 
 static SpecializationContract getStageAContract() {
-  return {"Stage A MLP", kStageAHidden, kStageAIntermediate};
+  return {ContractKind::StageA, "Stage A MLP", kStageAHidden,
+          kStageAIntermediate, kActivationSequenceArguments};
 }
 
 static SpecializationContract getStageBContract() {
-  return {"Stage B tiny encoder", kStageBHidden, kStageBIntermediate};
+  return {ContractKind::StageB, "Stage B tiny encoder", kStageBHidden,
+          kStageBIntermediate, kActivationSequenceArguments};
+}
+
+static SpecializationContract getE5Contract() {
+  return {ContractKind::E5, "E5-small-v2", kE5Hidden,
+          /*intermediate=*/0, kE5SequenceArguments};
 }
 
 static mlir::LogicalResult
@@ -139,6 +154,36 @@ static mlir::LogicalResult validateParameter(mlir::func::FuncOp entry,
   return mlir::success();
 }
 
+static mlir::LogicalResult
+validateE5SequenceInput(mlir::func::FuncOp entry, mlir::Type type,
+                        unsigned index, llvm::StringRef name) {
+  auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
+  if (!tensorType)
+    return entry.emitError() << "expected " << name << " argument " << index
+                             << " to be a ranked tensor";
+  if (!tensorType.getElementType().isInteger(64))
+    return entry.emitError() << "expected " << name << " argument " << index
+                             << " element type i64";
+  if (tensorType.getRank() != 2)
+    return entry.emitError() << "expected " << name << " argument " << index
+                             << " to have rank 2";
+  if (tensorType.getDimSize(0) != kBatch) {
+    auto diagnostic = entry.emitError()
+                      << "expected " << name << " argument " << index
+                      << " batch dimension 1, got ";
+    if (mlir::ShapedType::isDynamic(tensorType.getDimSize(0)))
+      diagnostic << "dynamic";
+    else
+      diagnostic << tensorType.getDimSize(0);
+    return diagnostic;
+  }
+  if (!mlir::ShapedType::isDynamic(tensorType.getDimSize(kSequenceAxis)))
+    return entry.emitError()
+           << "expected " << name << " argument " << index
+           << " dynamic sequence dimension at axis 1";
+  return mlir::success();
+}
+
 static bool isDynamicRankedTensor(mlir::Type type) {
   auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
   return tensorType && !tensorType.hasStaticShape();
@@ -146,6 +191,11 @@ static bool isDynamicRankedTensor(mlir::Type type) {
 
 static bool isContractDynamicTensorType(mlir::Type type,
                                         SpecializationContract contract) {
+  // Step 5 admits only the E5 ABI and routing shell. Step 6 separately audits
+  // and enables dynamic tensor families from the imported encoder body.
+  if (contract.kind == ContractKind::E5)
+    return false;
+
   auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
   if (!tensorType || !tensorType.getElementType().isF32() ||
       tensorType.hasStaticShape())
@@ -416,14 +466,59 @@ validateStageBTinyEncoderEntry(mlir::func::FuncOp entry) {
                            "result 0");
 }
 
+static mlir::LogicalResult validateE5Entry(mlir::func::FuncOp entry) {
+  auto functionType = entry.getFunctionType();
+  if (functionType.getNumInputs() != 3)
+    return entry.emitError()
+           << "expected E5-small-v2 entry to have 3 arguments";
+  if (functionType.getNumResults() != 1)
+    return entry.emitError()
+           << "expected E5-small-v2 entry to have 1 result";
+
+  constexpr llvm::StringLiteral names[] = {
+      "input_ids", "attention_mask", "token_type_ids"};
+  for (unsigned index = 0; index < 3; ++index) {
+    if (mlir::failed(validateE5SequenceInput(
+            entry, functionType.getInput(index), index, names[index])))
+      return mlir::failure();
+  }
+
+  auto resultType = getF32TensorType(entry.getContext(), {kBatch, kE5Hidden});
+  return validateExactType(entry, functionType.getResult(0), resultType,
+                           "result 0");
+}
+
+static mlir::LogicalResult validateEntry(mlir::func::FuncOp entry,
+                                         ContractKind kind) {
+  switch (kind) {
+  case ContractKind::StageA:
+    return validateStageAMlpEntry(entry);
+  case ContractKind::StageB:
+    return validateStageBTinyEncoderEntry(entry);
+  case ContractKind::E5:
+    return validateE5Entry(entry);
+  }
+  llvm_unreachable("unknown shortseq contract");
+}
+
 static mlir::Type refineTensorType(mlir::Type type,
                                    SpecializationContract contract,
                                    int64_t sequenceLength) {
   auto tensorType = mlir::dyn_cast<mlir::RankedTensorType>(type);
-  if (!tensorType || !tensorType.getElementType().isF32())
+  if (!tensorType)
     return type;
 
   auto shape = tensorType.getShape();
+  if (contract.kind == ContractKind::E5) {
+    if (tensorType.getElementType().isInteger(64) &&
+        shape.equals({kBatch, mlir::ShapedType::kDynamic}))
+      return tensorType.clone({kBatch, sequenceLength});
+    return type;
+  }
+
+  if (!tensorType.getElementType().isF32())
+    return type;
+
   if (shape.equals({kBatch, mlir::ShapedType::kDynamic, contract.hidden}))
     return getF32TensorType(tensorType.getContext(),
                             {kBatch, sequenceLength, contract.hidden});
@@ -486,7 +581,8 @@ static void refineClone(mlir::func::FuncOp clone,
                         SpecializationContract contract,
                         int64_t sequenceLength) {
   clone.setType(getStaticFunctionType(clone, contract, sequenceLength));
-  clone.getArgument(0).setType(clone.getFunctionType().getInput(0));
+  for (unsigned index = 0; index < clone.getNumArguments(); ++index)
+    clone.getArgument(index).setType(clone.getFunctionType().getInput(index));
 
   clone.walk([&](mlir::Operation *op) {
     for (mlir::Value result : op->getResults())
@@ -502,20 +598,23 @@ static void refineClone(mlir::func::FuncOp clone,
 static mlir::Value emitStaticCall(mlir::OpBuilder &builder, mlir::Location loc,
                                   mlir::func::FuncOp staticFunc,
                                   mlir::ValueRange wrapperArgs,
+                                  SpecializationContract contract,
                                   mlir::Type dynamicResultType) {
   auto staticFuncType = staticFunc.getFunctionType();
-  mlir::Type staticInputType = staticFuncType.getInput(0);
   mlir::Type staticResultType = staticFuncType.getResult(0);
 
-  mlir::Value staticInput = mlir::tensor::CastOp::create(
-      builder, loc, staticInputType, wrapperArgs.front());
   mlir::SmallVector<mlir::Value> staticOperands(wrapperArgs.begin(),
                                                 wrapperArgs.end());
-  staticOperands[0] = staticInput;
+  for (unsigned argument : contract.sequenceArguments) {
+    staticOperands[argument] = mlir::tensor::CastOp::create(
+        builder, loc, staticFuncType.getInput(argument), wrapperArgs[argument]);
+  }
 
   auto staticCall = mlir::func::CallOp::create(
       builder, loc, staticFunc.getSymName(), mlir::TypeRange{staticResultType},
       staticOperands);
+  if (staticResultType == dynamicResultType)
+    return staticCall.getResult(0);
   return mlir::tensor::CastOp::create(builder, loc, dynamicResultType,
                                       staticCall.getResult(0));
 }
@@ -525,14 +624,23 @@ emitDispatchChain(mlir::OpBuilder &builder, mlir::Location loc,
                   mlir::func::FuncOp genericFunc,
                   llvm::ArrayRef<mlir::func::FuncOp> staticFuncs,
                   llvm::ArrayRef<int64_t> lengths, unsigned index,
-                  mlir::Value sequenceLengthValue,
+                  llvm::ArrayRef<mlir::Value> sequenceLengthValues,
+                  SpecializationContract contract,
                   mlir::ValueRange wrapperArgs) {
   auto wrapperType = genericFunc.getFunctionType();
   mlir::Value staticLengthValue =
       mlir::arith::ConstantIndexOp::create(builder, loc, lengths[index]);
-  mlir::Value isStaticLength =
-      mlir::arith::CmpIOp::create(builder, loc, mlir::arith::CmpIPredicate::eq,
-                                  sequenceLengthValue, staticLengthValue);
+  mlir::Value isStaticLength;
+  for (mlir::Value sequenceLengthValue : sequenceLengthValues) {
+    mlir::Value argumentMatches = mlir::arith::CmpIOp::create(
+        builder, loc, mlir::arith::CmpIPredicate::eq, sequenceLengthValue,
+        staticLengthValue);
+    if (isStaticLength)
+      isStaticLength = mlir::arith::AndIOp::create(
+          builder, loc, isStaticLength, argumentMatches);
+    else
+      isStaticLength = argumentMatches;
+  }
 
   auto dispatch = mlir::scf::IfOp::create(
       builder, loc, wrapperType.getResults(), isStaticLength,
@@ -540,14 +648,16 @@ emitDispatchChain(mlir::OpBuilder &builder, mlir::Location loc,
 
   builder.setInsertionPointToStart(&dispatch.getThenRegion().front());
   mlir::Value staticResult = emitStaticCall(
-      builder, loc, staticFuncs[index], wrapperArgs, wrapperType.getResult(0));
+      builder, loc, staticFuncs[index], wrapperArgs, contract,
+      wrapperType.getResult(0));
   mlir::scf::YieldOp::create(builder, loc, mlir::ValueRange{staticResult});
 
   builder.setInsertionPointToStart(&dispatch.getElseRegion().front());
   if (index + 1 < staticFuncs.size()) {
     mlir::Value nestedResult =
         emitDispatchChain(builder, loc, genericFunc, staticFuncs, lengths,
-                          index + 1, sequenceLengthValue, wrapperArgs);
+                          index + 1, sequenceLengthValues, contract,
+                          wrapperArgs);
     mlir::scf::YieldOp::create(builder, loc, mlir::ValueRange{nestedResult});
   } else {
     auto genericCall =
@@ -563,7 +673,8 @@ emitDispatchChain(mlir::OpBuilder &builder, mlir::Location loc,
 static void emitDispatchWrapper(mlir::func::FuncOp genericFunc,
                                 llvm::ArrayRef<mlir::func::FuncOp> staticFuncs,
                                 llvm::ArrayRef<int64_t> lengths,
-                                llvm::StringRef wrapperName) {
+                                llvm::StringRef wrapperName,
+                                SpecializationContract contract) {
   mlir::OpBuilder builder(genericFunc.getContext());
   builder.setInsertionPointAfter(staticFuncs.back());
   auto loc = genericFunc.getLoc();
@@ -578,15 +689,17 @@ static void emitDispatchWrapper(mlir::func::FuncOp genericFunc,
   mlir::Block *body = wrapper.addEntryBlock();
   builder.setInsertionPointToStart(body);
 
-  mlir::Value input = body->getArgument(0);
   mlir::Value sequenceAxis =
       mlir::arith::ConstantIndexOp::create(builder, loc, kSequenceAxis);
-  mlir::Value sequenceLengthValue =
-      mlir::tensor::DimOp::create(builder, loc, input, sequenceAxis);
+  mlir::SmallVector<mlir::Value> sequenceLengthValues;
+  for (unsigned argument : contract.sequenceArguments) {
+    sequenceLengthValues.push_back(mlir::tensor::DimOp::create(
+        builder, loc, body->getArgument(argument), sequenceAxis));
+  }
 
   mlir::Value result =
       emitDispatchChain(builder, loc, genericFunc, staticFuncs, lengths, 0,
-                        sequenceLengthValue, body->getArguments());
+                        sequenceLengthValues, contract, body->getArguments());
   mlir::func::ReturnOp::create(builder, loc, result);
 }
 
@@ -610,6 +723,7 @@ emitSpecializations(mlir::ModuleOp module, mlir::func::FuncOp entry,
   entry.setName(genericName);
   entry->removeAttr("shortseq.entry");
   entry->removeAttr("shortseq.stage_b");
+  entry->removeAttr("shortseq.e5_small_v2");
 
   mlir::OpBuilder builder(module.getBodyRegion());
   mlir::Operation *insertAfter = entry.getOperation();
@@ -627,7 +741,7 @@ emitSpecializations(mlir::ModuleOp module, mlir::func::FuncOp entry,
     insertAfter = staticFunc.getOperation();
   }
 
-  emitDispatchWrapper(entry, staticFuncs, lengths, originalName);
+  emitDispatchWrapper(entry, staticFuncs, lengths, originalName, contract);
 
   return mlir::success();
 }
@@ -686,11 +800,20 @@ public:
 
     mlir::func::FuncOp entry = entries.front();
     bool isStageB = entry->hasAttr("shortseq.stage_b");
-    SpecializationContract contract =
-        isStageB ? getStageBContract() : getStageAContract();
+    bool isE5 = entry->hasAttr("shortseq.e5_small_v2");
+    if (isStageB && isE5) {
+      entry.emitError() << "conflicting shortseq contract markers";
+      signalPassFailure();
+      return;
+    }
 
-    if (isStageB ? mlir::failed(validateStageBTinyEncoderEntry(entry))
-                 : mlir::failed(validateStageAMlpEntry(entry))) {
+    SpecializationContract contract = getStageAContract();
+    if (isE5)
+      contract = getE5Contract();
+    else if (isStageB)
+      contract = getStageBContract();
+
+    if (mlir::failed(validateEntry(entry, contract.kind))) {
       signalPassFailure();
       return;
     }
