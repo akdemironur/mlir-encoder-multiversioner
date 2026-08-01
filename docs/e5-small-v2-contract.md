@@ -114,6 +114,10 @@ dispatch path at `S=16,32,64,128`; `S=17` exercises the generic fallback.
 The fixtures include padded and unpadded masks and explicit `query:` and
 `passage:` prefixes. An all-zero mask is rejected before runtime invocation.
 
+The independently runnable CPU configurations, raw-trial retention policy,
+measurement boundary, accounting definitions, and current descriptive results
+are recorded in [e5-benchmark.md](e5-benchmark.md).
+
 ## Contract-expansion checklist
 
 - Design note: this document.

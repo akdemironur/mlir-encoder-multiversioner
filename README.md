@@ -392,3 +392,18 @@ until that gate succeeds.
 The current toolchain pins IREE `3.11.0` for both existing benchmarks and the
 E5 bridge. Earlier Stage A/B result tables remain historical measurements from
 IREE `20241104.1068`; rerun them before drawing comparisons with Stage C.
+
+Run the E5 CPU benchmark after `check-e5`:
+
+```sh
+uv run --frozen --group e5 python benchmarks/bench_e5_iree.py \
+  --lengths 16,32,64,128
+```
+
+Dynamic, static-oracle, and dispatched configurations may each be selected
+with `--variants`. Raw repeated trials and accounting are retained under
+`results/e5-small-v2/benchmarks/`. The static oracle is built independently
+from fixed-width ONNX metadata and reuses the same IRPA; it does not invoke the
+multiversioning pass. See [the E5 benchmark note](docs/e5-benchmark.md) for the
+measurement boundary, current descriptive snapshot, and scratch-accounting
+limitation.

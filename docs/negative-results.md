@@ -1,5 +1,19 @@
 # Negative Results
 
+## 2026-08-01: E5 CPU timing does not support a causal speedup claim
+
+The final pinned one-worker LLVM CPU snapshot at `S=16,32,64,128` placed both
+static-oracle and dispatched medians below the dynamic baseline, but relative
+gaps varied by length and the S=32 dispatched/oracle distributions did not
+overlap. Preliminary diagnostic reruns changed the ordering at some lengths.
+CPU frequency scaling remained enabled, and no IR, generated-code, or counter
+analysis was performed.
+
+This is a descriptive negative result, not evidence for a cause. The full
+latency distributions, compilation and artifact costs, memory accounting,
+boundary exclusions, and retained raw-run location are in
+[e5-benchmark.md](e5-benchmark.md).
+
 ## 2026-08-01: static position slices cannot exceed 512 tokens
 
 The imported encoder retains ONNX's clamped slice of the fixed

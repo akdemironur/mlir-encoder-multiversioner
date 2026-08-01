@@ -151,6 +151,8 @@ add_custom_target(check-e5
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group e5 python test/e5/bridge_checker.py
   COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
+          "${SHORTSEQ_UV}" run --frozen --group e5 python test/e5/benchmark_helpers.py
+  COMMAND "${CMAKE_COMMAND}" -E env "UV_CACHE_DIR=${CMAKE_BINARY_DIR}/uv-cache"
           "${SHORTSEQ_UV}" run --frozen --group e5 python test/e5/iree_dynamic_numerical.py
   COMMAND "${SHORTSEQ_MLIR_OPT}"
           --allow-unregistered-dialect
